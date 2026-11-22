@@ -40,6 +40,8 @@ junk skipped, main file and engine detected).
 * CodeMirror editor with LaTeX highlighting, search (Ctrl+F), word count, optional spell-check, image preview, file tree, upload,
   rename/move, delete, download, drag and drop.
 
+**Speed** — a compile has a fixed start-up cost: GitHub must start a machine and download TeX Live (the full image takes about 90 seconds, the medium one about 15). With the default "latest" setting LeoTeX tries the small image first and uses the full one only when something is missing, and remembers that per project; simple documents then finish in under a minute, documents that need the full TeX Live take about two minutes. The status bar shows compile time and total time. Frozen TeX Live years always use the full image.
+
 **Compiler settings (you choose, and it really changes)** — *Compiler* on the start page: the **TeX Live version** (latest or any
 frozen year 2025 … 2013) and the **time limit** (1–40 min), saved as `prism-compiler.json`. Per project: engine, main file, clean
 build, extra latexmk options, `.latexmkrc`, shell escape. After a compile the bar shows the TeX Live year used and the exact

@@ -9,5 +9,11 @@ jobs:
       - name: Probe
         run: |
           mkdir w && cd w
-          printf '\documentclass{article}\begin{document}hi\end{document}\n' > t.tex
-          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp/home -v "$PWD:/work" -w /work texlive/texlive:latest-medium bash -c 'echo "HOME=$HOME"; mkdir -p "$HOME"; which latexmk perl pdflatex biber; latexmk -pdf -interaction=nonstopmode t.tex; echo EXIT=$?; for f in fontspec.sty biblatex.sty polyglossia.sty xcolor.sty; do echo "$f: $(kpsewhich $f)"; done' 2>&1 | tail -30
+          cat > t.tex <<'T'
+          \documentclass{article}
+          \begin{document}
+          hi
+          \end{document}
+          T
+          sed -i 's/^ *//' t.tex
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" -e HOME=/tmp/home -v "$PWD:/work" -w /work texlive/texlive:latest-medium bash -c 'mkdir -p "$HOME"; latexmk -norc -f -interaction=nonstopmode -file-line-error -synctex=1 -pdf t.tex 2>&1 | tail -15; echo ---; which perl jq 2>&1'

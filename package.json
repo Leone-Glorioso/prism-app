@@ -21,7 +21,7 @@
     "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {
-    "typescript": "~5.6.3",
+    "typescript": "~7.0.2",
     "vite": "~5.4.21",
     "vitest": "~2.1.9"
   }

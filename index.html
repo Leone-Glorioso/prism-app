@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- The GitHub token lives in this page's storage: allow no third-party code at all. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src https://api.github.com; worker-src 'self'; font-src 'self'; base-uri 'none'; object-src 'none'">
+  <!-- The GitHub token lives in this page's storage: allow no third-party code at all.
+       frame-ancestors cannot be set from a meta tag; src/guard.ts refuses to run inside a frame instead. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src https://api.github.com; worker-src 'self'; font-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-src 'none'; media-src 'none'; manifest-src 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3 21 19H3Z'/%3E%3Cpath d='M12 3v16M3 19l9-6 9 6'/%3E%3C/svg%3E">
@@ -23,9 +24,16 @@
     <div class="actions">
       <button id="save" class="btn" data-icon="save" title="Save (Ctrl+S)" disabled><span class="label">Save</span></button>
       <button id="compile" class="btn primary" data-icon="play" title="Save and compile (Ctrl+Enter)" disabled><span class="label">Compile</span></button>
-      <button id="settings" class="icon-btn" data-icon="settings" title="Connection settings" aria-label="Connection settings"></button>
+      <button id="connection" class="icon-btn" data-icon="shield" title="Connection and security" aria-label="Connection and security"></button>
+      <button id="settings" class="icon-btn" data-icon="settings" title="Preferences" aria-label="Preferences"></button>
     </div>
   </header>
+
+  <div id="banner" class="banner" role="status" hidden>
+    <span id="banner-text"></span>
+    <button id="banner-action" class="btn sm"></button>
+    <button id="banner-close" class="icon-btn sm" aria-label="Dismiss">×</button>
+  </div>
 
   <nav class="view-tabs" aria-label="Panels">
     <button data-view="files" data-icon="folder">Files</button>
@@ -34,20 +42,34 @@
   </nav>
 
   <main class="layout" id="layout">
-    <aside class="panel files" aria-label="Files">
+    <aside class="panel files" aria-label="Project sidebar">
       <div class="panel-head">
-        <span class="panel-label">Files</span>
-        <div class="tools">
-          <button id="new-file" class="icon-btn sm" data-icon="filePlus" title="New file" aria-label="New file" disabled></button>
-          <button id="upload-btn" class="icon-btn sm" data-icon="upload" title="Upload files" aria-label="Upload files" disabled></button>
-          <button id="rename" class="icon-btn sm" data-icon="pencil" title="Rename or move" aria-label="Rename or move" disabled></button>
-          <button id="delete" class="icon-btn sm" data-icon="trash" title="Delete" aria-label="Delete" disabled></button>
-          <button id="download" class="icon-btn sm" data-icon="download" title="Download file" aria-label="Download file" disabled></button>
-          <button id="zip" class="icon-btn sm" data-icon="archive" title="Download project as ZIP" aria-label="Download project as ZIP" disabled></button>
-          <button id="refresh" class="icon-btn sm" data-icon="refresh" title="Load changes pushed from elsewhere" aria-label="Refresh" disabled></button>
+        <div class="segmented" role="tablist" aria-label="Sidebar">
+          <button id="tab-files" role="tab" aria-selected="true" aria-controls="tree">Files</button>
+          <button id="tab-outline" role="tab" aria-selected="false" aria-controls="outline">Outline</button>
+          <button id="tab-search" role="tab" aria-selected="false" aria-controls="search" title="Search in project (Ctrl+Shift+F)">Search</button>
         </div>
       </div>
-      <div id="tree" class="tree"></div>
+      <div id="files-tools" class="toolbar-row">
+        <button id="new-file" class="icon-btn sm" data-icon="filePlus" title="New file" aria-label="New file" disabled></button>
+        <button id="upload-btn" class="icon-btn sm" data-icon="upload" title="Upload files" aria-label="Upload files" disabled></button>
+        <button id="rename" class="icon-btn sm" data-icon="pencil" title="Rename or move" aria-label="Rename or move" disabled></button>
+        <button id="delete" class="icon-btn sm" data-icon="trash" title="Delete" aria-label="Delete" disabled></button>
+        <button id="download" class="icon-btn sm" data-icon="download" title="Download file" aria-label="Download file" disabled></button>
+        <button id="zip" class="icon-btn sm" data-icon="archive" title="Download project as ZIP" aria-label="Download project as ZIP" disabled></button>
+        <button id="refresh" class="icon-btn sm" data-icon="refresh" title="Load changes pushed from elsewhere" aria-label="Refresh" disabled></button>
+      </div>
+      <div id="tree" class="tree" role="tabpanel"></div>
+      <div id="outline" class="tree outline" role="tabpanel" hidden></div>
+      <div id="search" class="search" role="tabpanel" hidden>
+        <form id="search-form" class="search-form">
+          <input id="search-q" type="search" placeholder="Search in project…" autocomplete="off" spellcheck="false" aria-label="Search in project">
+          <label class="check" title="Match case"><input id="search-case" type="checkbox"><span>Aa</span></label>
+          <label class="check" title="Regular expression"><input id="search-re" type="checkbox"><span>.*</span></label>
+        </form>
+        <div id="search-summary" class="hint"></div>
+        <div id="search-results" class="results"></div>
+      </div>
       <input type="file" id="upload" multiple hidden>
     </aside>
 
@@ -56,14 +78,18 @@
     <section class="panel editor" aria-label="Editor">
       <div class="panel-head">
         <span class="panel-label" id="editor-title">Editor</span>
-        <span class="kbd-hint"><kbd>Ctrl</kbd> <kbd>S</kbd> save · <kbd>Ctrl</kbd> <kbd>Enter</kbd> compile</span>
+        <span id="wc" class="kbd-hint"></span>
+        <div class="tools">
+          <button id="forward" class="icon-btn sm" data-icon="jump" title="Show this line in the PDF (Ctrl+Alt+J)" aria-label="Show this line in the PDF" disabled></button>
+          <button id="history" class="icon-btn sm" data-icon="clock" title="File history" aria-label="File history" disabled></button>
+        </div>
       </div>
       <div id="editor" class="editor-host"></div>
       <div id="preview" class="preview" hidden></div>
       <div id="editor-empty" class="empty">
         <div class="empty-icon" data-icon="file"></div>
-        <p class="empty-title">No file open</p>
-        <p>Choose a file from the list on the left.</p>
+        <p class="empty-title" id="empty-title">No file open</p>
+        <p id="empty-text">Choose a file from the list on the left.</p>
       </div>
     </section>
 
@@ -101,31 +127,82 @@
         <h1>Your LaTeX projects, online</h1>
         <p>Edit in the browser, compile with full TeX Live (pdfLaTeX, XeLaTeX, LuaLaTeX, BibTeX, Biber) and read the PDF next to your source.</p>
         <ul class="welcome-points">
-          <li data-icon="lock"><span>Files stay in your <strong>private</strong> GitHub repository, with full history.</span></li>
+          <li data-icon="lock"><span>Files stay in <strong>your own private</strong> GitHub repository, with full history.</span></li>
           <li data-icon="play"><span>Compiles run in GitHub Actions with full TeX Live — no page or package limits.</span></li>
-          <li data-icon="refresh"><span>Codex, Claude and your other devices work on the same files.</span></li>
+          <li data-icon="jump"><span>Click in the PDF to jump to the source, and back.</span></li>
         </ul>
         <button id="welcome-connect" class="btn primary lg">Connect repository</button>
+        <p class="hint">First time? The connection window explains how to create your own repository in about two minutes.</p>
       </div>
     </div>
   </main>
 
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <h2 id="settings-title">Connect your projects repository</h2>
-    <p class="hint">Your files live in a <strong>private</strong> GitHub repository. The token is stored only in this browser.</p>
+    <p class="hint">Your files live in a <strong>private</strong> GitHub repository that you own. Each person uses their own repository.</p>
     <div class="form-grid">
-      <label>Owner<input id="s-owner" autocomplete="off" spellcheck="false" placeholder="GitHub user or organisation"></label>
+      <label>Owner<input id="s-owner" autocomplete="off" spellcheck="false" placeholder="GitHub user"></label>
       <label>Repository<input id="s-repo" autocomplete="off" spellcheck="false" placeholder="prism-data"></label>
       <label>Branch<input id="s-branch" autocomplete="off" spellcheck="false" value="main"></label>
       <label class="wide">Fine-grained personal access token<input id="s-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
     </div>
-    <p class="hint">Create it under GitHub → Settings → Developer settings → Fine-grained tokens. Repository access: only this repository. Permissions: <strong>Contents</strong> and <strong>Actions</strong>, read and write.</p>
+    <fieldset class="modes">
+      <legend>Keep the token in this browser</legend>
+      <label class="radio"><input type="radio" name="s-mode" value="device" checked><span><strong>On this device</strong> — convenient; readable by any script on this site's address.</span></label>
+      <label class="radio"><input type="radio" name="s-mode" value="encrypted"><span><strong>Encrypted with a passphrase</strong> — asked after each restart. Recommended.</span></label>
+      <label class="radio"><input type="radio" name="s-mode" value="session"><span><strong>Only until the tab closes</strong> — most private.</span></label>
+    </fieldset>
+    <label id="s-pass-label" hidden>Passphrase (at least 8 characters — keep it, it cannot be recovered)<input id="s-pass" type="password" autocomplete="new-password" spellcheck="false"></label>
+    <details class="howto">
+      <summary>First time? Create your own repository</summary>
+      <ol>
+        <li>Create a <strong>private</strong> repository on GitHub (for example <code>prism-data</code>) and tick <strong>Add a README file</strong>:
+          <a href="https://github.com/new?name=prism-data" target="_blank" rel="noopener noreferrer">github.com/new</a></li>
+        <li>Create a token: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">GitHub → Settings → Fine-grained tokens</a>. Repository access: <em>only</em> that repository. Permissions: <strong>Contents</strong>, <strong>Actions</strong> and (for the first setup only) <strong>Workflows</strong> — all read and write.</li>
+        <li>Enter owner, repository and token here and press Connect. The app offers to set the repository up. Afterwards you can remove the Workflows permission from the token.</li>
+      </ol>
+      <p class="hint">To share one repository, give each person their own: GitHub does not let fine-grained tokens use another person's personal repository.</p>
+    </details>
     <p id="s-error" class="error" role="alert"></p>
     <div class="dialog-buttons">
-      <button id="s-forget" class="btn danger">Forget token</button>
+      <button id="s-forget" class="btn danger" title="Remove the token, drafts and preferences from this browser">Clear this browser</button>
       <span class="sep"></span>
       <button id="s-cancel" class="btn">Cancel</button>
       <button id="s-save" class="btn primary">Connect</button>
+    </div>
+  </dialog>
+
+  <dialog id="unlock-dialog" aria-labelledby="unlock-title">
+    <h2 id="unlock-title">Unlock</h2>
+    <p class="hint">Enter your passphrase to decrypt the stored token.</p>
+    <label>Passphrase<input id="u-pass" type="password" autocomplete="current-password" spellcheck="false"></label>
+    <p id="u-error" class="error" role="alert"></p>
+    <div class="dialog-buttons">
+      <button id="u-forget" class="btn danger">Forget stored token</button>
+      <span class="sep"></span>
+      <button id="u-ok" class="btn primary">Unlock</button>
+    </div>
+  </dialog>
+
+  <dialog id="prefs-dialog" aria-labelledby="prefs-title">
+    <h2 id="prefs-title">Preferences</h2>
+    <div class="form-grid">
+      <label>Theme
+        <select id="pf-theme"><option value="auto">Match system</option><option value="light">Light</option><option value="dark">Dark</option></select>
+      </label>
+      <label>Editor font size<input id="pf-size" type="number" min="10" max="28" step="1"></label>
+      <label>Click in the PDF to jump to source
+        <select id="pf-jump"><option value="double">Double-click</option><option value="ctrl">Ctrl/Cmd + click</option><option value="off">Off</option></select>
+      </label>
+      <label>Spell-check language
+        <select id="pf-lang"><option value="en">English</option><option value="el">Greek</option><option value="de">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option></select>
+      </label>
+      <label class="check wide"><input id="pf-spell" type="checkbox"><span>Spell-check while typing (uses your browser's dictionary)</span></label>
+      <label class="check wide"><input id="pf-follow" type="checkbox"><span>Scroll the PDF to follow the cursor</span></label>
+    </div>
+    <div class="dialog-buttons">
+      <span class="sep"></span>
+      <button id="pf-close" class="btn primary">Done</button>
     </div>
   </dialog>
 
@@ -146,6 +223,34 @@
       <span class="sep"></span>
       <button id="p-cancel" class="btn">Cancel</button>
       <button id="p-ok" class="btn primary">OK</button>
+    </div>
+  </dialog>
+
+  <dialog id="setup-dialog" aria-labelledby="setup-title">
+    <h2 id="setup-title">Set up this repository</h2>
+    <p id="setup-text" class="hint"></p>
+    <p class="hint">This commits the compile workflow (<code>.github/workflows/compile.yml</code>, <code>.github/scripts/compile.sh</code>) and a project list. GitHub only accepts workflow files from a token that has the <strong>Workflows: read and write</strong> permission — add it to your token for this step, and remove it again afterwards. Nothing else is changed.</p>
+    <p id="setup-error" class="error" role="alert"></p>
+    <div class="dialog-buttons">
+      <span class="sep"></span>
+      <button id="setup-cancel" class="btn">Not now</button>
+      <button id="setup-ok" class="btn primary">Set up</button>
+    </div>
+  </dialog>
+
+  <dialog id="history-dialog" class="wide-dialog" aria-labelledby="history-title">
+    <h2 id="history-title">File history</h2>
+    <div class="history">
+      <ul id="history-list" class="history-list" aria-label="Versions"></ul>
+      <div class="history-view">
+        <p id="history-note" class="hint"></p>
+        <pre id="history-diff" class="diff"></pre>
+      </div>
+    </div>
+    <div class="dialog-buttons">
+      <span class="sep"></span>
+      <button id="history-close" class="btn">Close</button>
+      <button id="history-restore" class="btn primary" disabled>Restore this version</button>
     </div>
   </dialog>
 

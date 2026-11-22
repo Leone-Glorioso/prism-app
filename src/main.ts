@@ -1,3 +1,4 @@
+import './guard'; // must stay first: refuses to run inside a frame
 import './style.css';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -5,10 +6,19 @@ import { zipSync } from 'fflate';
 import { GitHub, GitHubError } from './github';
 import { Workspace, ConflictError } from './workspace';
 import { compile, fetchBuild, Build, CompileCancelled } from './compile';
-import { PdfView } from './pdfview';
-import { createState, createView, goToLine } from './editor';
+import { PdfView, PdfPoint } from './pdfview';
+import { createState, createView, currentLine, EditorEnv, goToLine } from './editor';
 import * as store from './storage';
 import { applyIcons, icon } from './icons';
+import { applyPrefs, isDark, loadPrefs, Prefs, sanitize, savePrefs } from './prefs';
+import { forward, inverse, mapInputs, parseSynctexFile, SyncTex } from './synctex';
+import { ProjectIndex } from './projectindex';
+import { projectOutline, wordCount } from './outline';
+import { searchTexts } from './search';
+import { diffLines } from './diff';
+import { citeKeysIn, completionSource, labelsIn } from './complete';
+import { SETUP_FILES, setupStatus } from './setup';
+import { WrongPassphrase } from './vault';
 import {
   applyEol, cleanPath, decodeText, detectEol, dirname, encodeText, Eol, formatBytes, imageType, isTexLike, joinPath,
   parseLog, resolveLogPath,
@@ -26,13 +36,16 @@ interface ManifestEntry {
   [key: string]: unknown;
 }
 interface OpenFile { state: EditorState; original: string; eol: Eol }
+interface SyncState { tex: SyncTex; map: Map<number, string>; tagsByPath: Map<string, Set<number>> }
 
 const MANIFEST = 'prism-projects.json';
 const MAX_UPLOAD = 50 * 1024 * 1024;
 
-let settings = store.loadSettings();
+let settings: store.Settings | null = null;
+let prefs: Prefs = loadPrefs();
 let gh: GitHub | null = null;
 let ws: Workspace | null = null;
+let index: ProjectIndex | null = null;
 let manifest: ManifestEntry[] = [];
 let project: ManifestEntry | null = null;
 let current: string | null = null; // open file path
@@ -43,11 +56,19 @@ let compileSeq = 0;
 let compiling = false;
 let lastBuild: Build | null = null;
 let previewUrl: string | null = null;
+let sideTab: 'files' | 'outline' | 'search' = 'files';
+let outlineTexts = new Map<string, string>();
+let completionLabels: string[] = [];
+let completionCites: string[] = [];
+let completionFiles: string[] = [];
+const syncCache = new WeakMap<Build, Promise<SyncState | null>>();
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const view: EditorView = createView($('editor'));
 const pdf = new PdfView($('pdf'));
+pdf.jumpMode = prefs.pdfJump;
 pdf.onChange = () => { renderBuildInfo(); setEnabled(); };
+pdf.onJump = (pt) => void jumpToSource(pt);
 
 // ---------- Small UI helpers ----------
 
@@ -64,6 +85,8 @@ function errorText(e: unknown): string {
 
 const projectRoot = () => (project ? project.MainFile.replace(/\\/g, '/').split('/')[0] : '');
 const mainPath = () => (project ? project.MainFile.replace(/\\/g, '/') : '');
+const basename = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+const relative = (path: string) => path.slice(projectRoot().length + 1);
 
 function setEnabled() {
   const connected = !!ws;
@@ -81,6 +104,12 @@ function setEnabled() {
   $('pdf-empty').hidden = pdf.hasDocument || $('pdf').hidden;
   ($('compile') as HTMLButtonElement).disabled = !hasProject;
   ($('download-pdf') as HTMLButtonElement).disabled = !lastBuild?.pdf;
+  ($('forward') as HTMLButtonElement).disabled = !(lastBuild?.pdf && current && !view.dom.hidden);
+  ($('history') as HTMLButtonElement).disabled = !(current && ws?.files.has(current));
+  if (!current) {
+    $('empty-title').textContent = hasProject ? 'No file open' : connected ? 'No projects yet' : 'Not connected';
+    $('empty-text').textContent = hasProject ? 'Choose a file from the list on the left.' : connected ? 'Create one with the + button at the top.' : 'Connect your repository first.';
+  }
 }
 
 function download(name: string, bytes: Uint8Array, type = 'application/octet-stream') {
@@ -92,14 +121,24 @@ function download(name: string, bytes: Uint8Array, type = 'application/octet-str
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-const basename = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+function showBanner(text: string, actionLabel?: string, action?: () => void, kind: 'warn' | 'error' = 'warn') {
+  const b = $('banner');
+  $('banner-text').textContent = text;
+  const btn = $<HTMLButtonElement>('banner-action');
+  btn.hidden = !actionLabel;
+  btn.textContent = actionLabel ?? '';
+  btn.onclick = action ?? null;
+  b.dataset.kind = kind;
+  b.hidden = false;
+}
+const hideBanner = () => { $('banner').hidden = true; };
 
 // ---------- Drafts (unsaved text kept in this browser) ----------
 
 let draftTimer = 0;
 function persistDrafts() {
   clearTimeout(draftTimer);
-  draftTimer = window.setTimeout(() => {
+  draftTimer = window.setTimeout(async () => {
     if (!settings || !ws) return;
     const drafts: store.Drafts = {};
     for (const [path, c] of ws.changes) {
@@ -107,41 +146,47 @@ function persistDrafts() {
       const text = decodeText(c.bytes);
       if (text !== null) drafts[path] = { text, base: c.base };
     }
-    if (!store.saveDrafts(settings, drafts)) setStatus('Could not store a local draft (browser storage blocked or full). Save soon.', 'error');
+    if (!(await store.saveDrafts(settings, drafts))) setStatus('Could not store a local draft (browser storage blocked or full). Save soon.', 'error');
   }, 400);
 }
 
-function restoreDrafts() {
+async function restoreDrafts() {
   if (!settings || !ws) return 0;
-  const drafts = store.loadDrafts(settings);
+  const drafts = await store.loadDrafts(settings);
   for (const [path, d] of Object.entries(drafts)) ws.restore(path, encodeText(d.text), d.base);
   return Object.keys(drafts).length;
 }
 
 // ---------- Connect / manifest / projects ----------
 
-async function connect() {
-  if (!settings) return openSettings();
-  gh = new GitHub(settings.token, settings.owner, settings.repo);
-  ws = new Workspace(gh, settings.branch);
+async function connect(s: store.Settings) {
+  settings = s;
+  gh = new GitHub(s.token, s.owner, s.repo);
+  ws = new Workspace(gh, s.branch);
+  index = new ProjectIndex(ws);
   open.clear();
   current = null;
+  hideBanner();
   setStatus('Loading repository…', 'busy');
   try {
     await ws.load();
   } catch (e) {
     ws = null;
+    index = null;
     setEnabled();
     setStatus(errorText(e), 'error');
-    if (e instanceof GitHubError && (e.status === 401 || e.status === 404)) openSettings(errorText(e));
+    if (e instanceof GitHubError && (e.status === 401 || e.status === 404)) {
+      openSettings(`${errorText(e)}${e.status === 404 ? ' If the repository is brand new and empty, create it with "Add a README file" ticked.' : ''}`);
+    }
     return;
   }
-  const restored = restoreDrafts();
+  const restored = await restoreDrafts();
   await loadManifest();
-  const last = store.lastProject(settings);
+  const last = store.lastProject(s);
   const pick = manifest.find((m) => m.Project === last) ?? manifest[0] ?? null;
   await selectProject(pick?.Project ?? null);
   setStatus(restored ? `Restored ${restored} unsaved file(s) from this browser.` : 'Ready.');
+  void checkSetup();
 }
 
 async function loadManifest() {
@@ -173,16 +218,20 @@ async function selectProject(name: string | null) {
   project = manifest.find((m) => m.Project === name) ?? null;
   selected = null;
   lastBuild = null;
+  outlineTexts = new Map();
+  completionLabels = completionCites = completionFiles = [];
   pdf.clear();
   renderLog();
   closeEditor();
-  if (!project) { renderTree(); setEnabled(); return; }
+  $('build-info').replaceChildren();
+  if (!project) { renderTree(); renderOutline(); setEnabled(); return; }
   $<HTMLSelectElement>('project').value = project.Project;
   if (settings) store.setLastProject(settings, project.Project);
   for (const d of dirParents(mainPath())) expanded.add(d);
   renderTree();
   setEnabled();
   if (ws!.exists(mainPath())) await openFile(mainPath());
+  scheduleIndex(100);
   void loadLastBuild(project.Project);
 }
 
@@ -197,7 +246,64 @@ async function loadLastBuild(name: string) {
   }
 }
 
-// ---------- File tree ----------
+// ---------- Index (outline, search, auto-completion data) ----------
+
+let indexTimer = 0;
+let indexRun = 0;
+function scheduleIndex(delay = 1200) {
+  clearTimeout(indexTimer);
+  indexTimer = window.setTimeout(() => void rebuildIndex(), delay);
+}
+
+async function rebuildIndex() {
+  if (!ws || !project || !index) return;
+  const run = ++indexRun;
+  const root = projectRoot();
+  try {
+    const texts = await index.texts(root);
+    if (run !== indexRun || !project) return;
+    outlineTexts = texts;
+    const labels: string[] = [];
+    const cites: string[] = [];
+    for (const [p, t] of texts) {
+      if (/\.(tex|ltx|sty|cls)$/i.test(p)) labels.push(...labelsIn(t));
+      if (/\.(bib|tex|bbl)$/i.test(p)) cites.push(...citeKeysIn(t));
+    }
+    completionLabels = [...new Set(labels)].sort();
+    completionCites = [...new Set(cites)].sort();
+    const mainDir = dirname(mainPath());
+    completionFiles = ws.paths()
+      .filter((p) => p.startsWith(`${mainDir}/`) && !/\.(aux|log|out|toc|blg|bbl|fls|gz|lof|lot|bcf|xml|xdv)$/i.test(p))
+      .map((p) => p.slice(mainDir.length + 1));
+    if (sideTab === 'outline') renderOutline();
+  } catch (e) {
+    console.error('Index failed', e);
+  }
+}
+
+function editorEnv(): EditorEnv {
+  return {
+    dark: isDark(prefs),
+    spellcheck: prefs.spellcheck,
+    lang: prefs.spellLang,
+    complete: completionSource(() => ({ labels: () => completionLabels, cites: () => completionCites, files: () => completionFiles })),
+  };
+}
+
+// ---------- Sidebar: files / outline / search ----------
+
+function setSideTab(tab: 'files' | 'outline' | 'search') {
+  sideTab = tab;
+  for (const t of ['files', 'outline', 'search'] as const) {
+    $(`tab-${t}`).setAttribute('aria-selected', String(t === tab));
+  }
+  $('tree').hidden = tab !== 'files';
+  $('files-tools').hidden = tab !== 'files';
+  $('outline').hidden = tab !== 'outline';
+  $('search').hidden = tab !== 'search';
+  if (tab === 'outline') { renderOutline(); scheduleIndex(50); }
+  if (tab === 'search') { $<HTMLInputElement>('search-q').focus(); $<HTMLInputElement>('search-q').select(); }
+}
 
 function dirParents(path: string): string[] {
   const parts = path.split('/');
@@ -243,7 +349,7 @@ function renderTree() {
       const btn = document.createElement('button');
       btn.className = 'file';
       btn.dataset.path = p;
-      btn.innerHTML = icon('file'); // static SVG only
+      btn.innerHTML = icon(imageType(p) ? 'image' : 'file'); // static SVG only
       const label = document.createElement('span');
       label.className = 'name';
       label.textContent = basename(p);
@@ -277,6 +383,90 @@ function markSelection(el: HTMLElement) {
   setEnabled();
 }
 
+function renderOutline() {
+  const host = $('outline');
+  host.replaceChildren();
+  if (!project) return;
+  const items = projectOutline(mainPath(), (p) => outlineTexts.get(p));
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'tree-note';
+    p.textContent = outlineTexts.size ? 'No sections found in the document.' : 'Loading…';
+    host.append(p);
+    return;
+  }
+  const min = Math.min(...items.map((i) => i.level));
+  const ul = document.createElement('ul');
+  for (const item of items) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.dataset.level = String(item.level);
+    b.style.paddingLeft = `${8 + (item.level - min) * 14}px`;
+    b.title = `${relative(item.file)}:${item.line}`;
+    b.append(item.title);
+    b.addEventListener('click', () => void openAt(item.file, item.line));
+    li.append(b);
+    ul.append(li);
+  }
+  host.append(ul);
+}
+
+let searchSeq = 0;
+let searchTimer = 0;
+async function runSearch() {
+  const q = $<HTMLInputElement>('search-q').value;
+  const results = $('search-results');
+  const summary = $('search-summary');
+  const seq = ++searchSeq;
+  if (!ws || !project || !index) return;
+  if (!q) { results.replaceChildren(); summary.textContent = ''; return; }
+  flushEdits();
+  summary.textContent = 'Searching…';
+  const texts = await index.texts(projectRoot());
+  if (seq !== searchSeq) return;
+  const r = searchTexts(texts, q, { regex: $<HTMLInputElement>('search-re').checked, caseSensitive: $<HTMLInputElement>('search-case').checked, max: 500 });
+  results.replaceChildren();
+  if (r.error) { summary.textContent = `Invalid pattern: ${r.error}`; return; }
+  const files = new Set(r.hits.map((h) => h.file));
+  summary.textContent = r.hits.length
+    ? `${r.hits.length}${r.truncated ? '+' : ''} matches in ${files.size} file(s) · searched ${texts.size} text files`
+    : `No matches · searched ${texts.size} text files`;
+  let lastFile = '';
+  for (const h of r.hits) {
+    if (h.file !== lastFile) {
+      lastFile = h.file;
+      const head = document.createElement('div');
+      head.className = 'file-head';
+      head.textContent = relative(h.file);
+      results.append(head);
+    }
+    const b = document.createElement('button');
+    const ln = document.createElement('span');
+    ln.className = 'ln';
+    ln.textContent = String(h.line);
+    const mark = document.createElement('mark');
+    mark.textContent = h.text.slice(h.markStart, h.markStart + h.length);
+    b.append(ln, h.text.slice(0, h.markStart), mark, h.text.slice(h.markStart + h.length));
+    b.addEventListener('click', () => void openAt(h.file, h.line, { col: h.col, len: h.length }));
+    results.append(b);
+  }
+}
+
+/** Opens a file and puts the cursor on a line (optionally selecting a match). */
+async function openAt(path: string, line: number, sel?: { col: number; len: number }) {
+  if (!ws) return;
+  flushEdits();
+  if (!ws.exists(path)) return;
+  if (current !== path || view.dom.hidden) await openFile(path);
+  if (view.dom.hidden || current !== path) return;
+  goToLine(view, line);
+  if (sel) {
+    const l = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
+    view.dispatch({ selection: { anchor: l.from + sel.col, head: Math.min(l.to, l.from + sel.col + sel.len) } });
+  }
+  showView('editor');
+}
+
 // ---------- Editor ----------
 
 function closeEditor() {
@@ -287,6 +477,7 @@ function closeEditor() {
   $('editor-title').textContent = 'Editor';
   $('editor-title').classList.remove('file-open');
   $('editor-empty').hidden = false;
+  $('wc').textContent = '';
 }
 
 function showPreview(content: HTMLElement | null) {
@@ -294,6 +485,12 @@ function showPreview(content: HTMLElement | null) {
   const pv = $('preview');
   pv.replaceChildren(...(content ? [content] : []));
   pv.hidden = !content;
+}
+
+function updateWordCount() {
+  const el = $('wc');
+  if (!current || view.dom.hidden || !isTexLike(current) || current.endsWith('.bib')) { el.textContent = ''; return; }
+  el.textContent = `${wordCount(view.state.doc.toString()).toLocaleString()} words`;
 }
 
 async function openFile(path: string) {
@@ -305,12 +502,15 @@ async function openFile(path: string) {
   setEnabled();
   $('editor-title').textContent = path.slice(projectRoot().length + 1);
   $('editor-title').classList.add('file-open');
+  $('wc').textContent = '';
   const cached = open.get(path);
   if (cached) {
     showPreview(null);
     view.dom.hidden = false;
     view.setState(cached.state);
     showView('editor');
+    updateWordCount();
+    setEnabled();
     return;
   }
   let bytes: Uint8Array;
@@ -326,19 +526,26 @@ async function openFile(path: string) {
   if (text === null) {
     view.dom.hidden = true;
     const box = document.createElement('div');
+    box.className = 'preview-box';
     let url: string | null = null;
+    const info = document.createElement('p');
+    info.className = 'meta';
     if (img) {
       url = URL.createObjectURL(new Blob([bytes], { type: img }));
       const el = document.createElement('img');
-      el.src = url;
       el.alt = basename(path);
+      el.title = 'Click to toggle actual size';
+      el.addEventListener('click', () => el.classList.toggle('actual'));
+      el.addEventListener('load', () => { info.textContent = `${el.naturalWidth} × ${el.naturalHeight} px · ${formatBytes(bytes.length)} · click the image to toggle actual size`; });
+      el.addEventListener('error', () => { info.textContent = `This image could not be displayed (${formatBytes(bytes.length)}).`; });
+      el.src = url;
+      info.textContent = formatBytes(bytes.length);
       box.append(el);
-    }
-    const info = document.createElement('p');
-    info.textContent = `${img ? 'Image' : 'Binary file'} · ${formatBytes(bytes.length)}. Use Download to open it, or Upload to replace it.`;
+    } else info.textContent = `Binary file · ${formatBytes(bytes.length)}. Use Download to open it, or Upload to replace it.`;
     box.append(info);
     showPreview(box);
     previewUrl = url; // revoked by the next showPreview
+    setEnabled();
     return;
   }
   // Original = committed text; editing back to it drops the local change.
@@ -348,16 +555,19 @@ async function openFile(path: string) {
     original = (committed && decodeText(committed)) ?? text;
   }
   const eol = detectEol(original);
-  const state = createState(path, text.replace(/\r\n/g, '\n'), hooks);
+  const state = createState(path, text.replace(/\r\n/g, '\n'), hooks, editorEnv());
   open.set(path, { state, original, eol });
   if (current !== path) return;
   showPreview(null);
   view.dom.hidden = false;
   view.setState(state);
   showView('editor');
+  updateWordCount();
+  setEnabled();
 }
 
 let changeTimer = 0;
+let followTimer = 0;
 const pendingEdits = new Map<string, EditorState>();
 const hooks = {
   onChange(path: string, state: EditorState) {
@@ -367,14 +577,21 @@ const hooks = {
     clearTimeout(changeTimer);
     changeTimer = window.setTimeout(flushEdits, 300);
   },
+  onCursor(path: string) {
+    if (!prefs.followCursor || path !== current) return;
+    clearTimeout(followTimer);
+    followTimer = window.setTimeout(() => void forwardSearch(true), 400);
+  },
   onSave: () => void save(),
   onCompile: () => void runCompile(),
+  onForward: () => void forwardSearch(),
 };
 
 /** Moves pending editor text into the workspace. */
 function flushEdits() {
   clearTimeout(changeTimer);
   if (!ws) return;
+  const hadEdits = pendingEdits.size > 0;
   for (const [path, state] of pendingEdits) {
     const f = open.get(path);
     if (!f) continue;
@@ -388,6 +605,15 @@ function flushEdits() {
   persistDrafts();
   renderTree();
   setEnabled();
+  if (hadEdits) { updateWordCount(); scheduleIndex(); }
+}
+
+/** Re-creates editor states (needed when theme, spell-check or language change). */
+function rebuildEditorStates() {
+  flushEdits();
+  open.clear();
+  const cur = current;
+  if (cur && !view.dom.hidden) { closeEditor(); void openFile(cur); }
 }
 
 // ---------- Save / refresh ----------
@@ -431,6 +657,7 @@ async function doSave(): Promise<boolean> {
   for (const f of open.values()) f.original = applyEol(f.state.doc.toString(), f.eol);
   persistDrafts();
   await afterRemoteChange();
+  scheduleIndex(300);
   setStatus('Saved.');
   return true;
 }
@@ -448,6 +675,7 @@ async function refresh() {
       reloaded++;
     }
     await afterRemoteChange();
+    if (changed.length) scheduleIndex(300);
     const pending = changed.filter((p) => ws!.changes.has(p));
     setStatus(changed.length
       ? `Loaded ${changed.length} changed file(s)${reloaded ? `, reopened ${reloaded}` : ''}.${pending.length ? ` ${pending.length} also edited here: Save will ask which version to keep.` : ''}`
@@ -468,6 +696,7 @@ async function afterRemoteChange() {
   }
   renderTree();
   setEnabled();
+  void checkSetup();
 }
 
 // ---------- Compile / build output ----------
@@ -518,6 +747,7 @@ async function showBuild(b: Build) {
     }
   } else pdf.clear();
   renderBuildInfo();
+  setEnabled();
 }
 
 function renderBuildInfo() {
@@ -555,10 +785,7 @@ function renderLog() {
     if (target && ws?.exists(target)) {
       const btn = document.createElement('button');
       btn.textContent = text;
-      btn.addEventListener('click', async () => {
-        await openFile(target);
-        if (issue.line) goToLine(view, issue.line);
-      });
+      btn.addEventListener('click', () => void openAt(target, issue.line ?? 1));
       li.append(btn);
     } else li.textContent = text;
     list.append(li);
@@ -579,6 +806,169 @@ function showView(v: 'files' | 'editor' | 'output') {
   if (window.matchMedia('(max-width: 899px)').matches) document.body.dataset.view = v;
 }
 
+// ---------- SyncTeX: source <-> PDF ----------
+
+function loadSync(b: Build): Promise<SyncState | null> {
+  let p = syncCache.get(b);
+  if (!p) {
+    p = (async () => {
+      const bytes = await b.synctex();
+      if (!bytes) return null;
+      const tex = parseSynctexFile(bytes);
+      const main = b.result.main_file.replace(/\\/g, '/');
+      const map = mapInputs(tex.inputs, main.split('/')[0], dirname(main), { has: (path) => ws?.exists(path) ?? false });
+      const tagsByPath = new Map<string, Set<number>>();
+      for (const [tag, path] of map) {
+        const set = tagsByPath.get(path) ?? new Set<number>();
+        set.add(tag);
+        tagsByPath.set(path, set);
+      }
+      return { tex, map, tagsByPath };
+    })();
+    syncCache.set(b, p);
+    p.catch(() => syncCache.delete(b));
+  }
+  return p;
+}
+
+const staleNote = () => (lastBuild && ws && (lastBuild.result.sha !== ws.baseCommit || ws.dirty) ? ' — the PDF is older than your text, so the position may be off' : '');
+
+/** Source line -> PDF position. */
+async function forwardSearch(quiet = false) {
+  if (!lastBuild?.pdf || !current || view.dom.hidden) {
+    if (!quiet) setStatus('Compile the project first, then use "Show this line in the PDF".');
+    return;
+  }
+  try {
+    const st = await loadSync(lastBuild);
+    if (!st) { if (!quiet) setStatus('This build has no SyncTeX data. Compile again.'); return; }
+    const tags = st.tagsByPath.get(current);
+    if (!tags) { if (!quiet) setStatus('This file is not part of the compiled document.'); return; }
+    const f = forward(st.tex, tags, currentLine(view));
+    if (!f) { if (!quiet) setStatus('No PDF output found for this line.'); return; }
+    pdf.reveal(f.page, f.rects[0]?.y ?? 0, f.rects);
+    if (!quiet) {
+      showOutput('pdf');
+      setStatus(`PDF page ${f.page}${f.exact ? '' : ' (nearest line with output)'}${staleNote()}`);
+    }
+  } catch (e) {
+    if (!quiet) setStatus(`Could not read SyncTeX data: ${errorText(e)}`, 'error');
+  }
+}
+
+/** PDF position -> source line. */
+async function jumpToSource(pt: PdfPoint) {
+  if (!lastBuild) return;
+  try {
+    const first = !syncCache.has(lastBuild);
+    if (first) setStatus('Loading SyncTeX data…', 'busy');
+    const st = await loadSync(lastBuild);
+    if (!st) { setStatus('This build has no SyncTeX data. Compile again.'); return; }
+    const hit = inverse(st.tex, pt.page, pt.x, pt.y, (tag) => st.map.has(tag));
+    if (!hit) { setStatus('No source found at this position.'); return; }
+    const path = st.map.get(hit.tag)!;
+    await openAt(path, hit.line);
+    setStatus(`Jumped to ${relative(path)}:${hit.line}${staleNote()}`);
+  } catch (e) {
+    setStatus(`Could not read SyncTeX data: ${errorText(e)}`, 'error');
+  }
+}
+
+// ---------- File history ----------
+
+interface Version { sha: string; message: string; author: string; date: string }
+let historyVersions: Version[] = [];
+let historyBytes: Uint8Array | null = null;
+let historyPath = '';
+
+async function openHistory() {
+  if (!gh || !settings || !current || !ws?.files.has(current)) return;
+  flushEdits();
+  historyPath = current;
+  historyBytes = null;
+  $('history-title').textContent = `History of ${relative(historyPath)}`;
+  $('history-list').replaceChildren();
+  $('history-diff').replaceChildren();
+  $('history-note').textContent = 'Loading versions…';
+  ($('history-restore') as HTMLButtonElement).disabled = true;
+  $<HTMLDialogElement>('history-dialog').showModal();
+  try {
+    const commits = await gh.listCommits(historyPath, settings.branch, 40);
+    historyVersions = commits.map((c) => ({
+      sha: c.sha, message: c.commit.message.split('\n')[0], author: c.commit.author?.name ?? 'unknown', date: c.commit.author?.date ?? '',
+    }));
+  } catch (e) {
+    $('history-note').textContent = `Could not load the history: ${errorText(e)}`;
+    return;
+  }
+  if (!historyVersions.length) { $('history-note').textContent = 'No earlier versions found.'; return; }
+  $('history-note').textContent = 'Pick a version to compare it with your current text.';
+  const list = $('history-list');
+  historyVersions.forEach((v, i) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.append(v.message || '(no message)');
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = `${v.author} · ${v.date ? new Date(v.date).toLocaleString() : ''}`;
+    b.append(when);
+    b.addEventListener('click', () => void selectVersion(i));
+    li.append(b);
+    list.append(li);
+  });
+}
+
+async function selectVersion(i: number) {
+  const v = historyVersions[i];
+  for (const [j, b] of [...$('history-list').querySelectorAll('button')].entries()) b.setAttribute('aria-current', String(j === i));
+  const diffEl = $('history-diff');
+  diffEl.replaceChildren();
+  historyBytes = null;
+  ($('history-restore') as HTMLButtonElement).disabled = true;
+  $('history-note').textContent = 'Loading…';
+  try {
+    const bytes = await gh!.getFileAt(historyPath, v.sha);
+    if (!bytes) { $('history-note').textContent = 'The file did not exist in that version.'; return; }
+    const old = decodeText(bytes);
+    if (old === null) { $('history-note').textContent = 'This version is a binary file; it cannot be compared.'; historyBytes = bytes; ($('history-restore') as HTMLButtonElement).disabled = false; return; }
+    const nowBytes = ws!.exists(historyPath) ? await ws!.read(historyPath) : new Uint8Array();
+    const now = decodeText(nowBytes) ?? '';
+    const lines = diffLines(now.replace(/\r\n/g, '\n').split('\n'), old.replace(/\r\n/g, '\n').split('\n'));
+    historyBytes = bytes;
+    ($('history-restore') as HTMLButtonElement).disabled = false;
+    if (!lines) { $('history-note').textContent = 'The versions differ too much to show a comparison. You can still restore it.'; return; }
+    const changed = lines.filter((l) => l.type !== 'eq').length;
+    $('history-note').textContent = changed
+      ? `Restoring this version would ADD the green lines and REMOVE the red lines (${changed} changed lines).`
+      : 'Identical to your current text.';
+    // Show changes with 3 lines of context; collapse the rest.
+    const keep = lines.map((l, k) => l.type !== 'eq' || lines.slice(Math.max(0, k - 3), k + 4).some((x) => x.type !== 'eq'));
+    let gap = false;
+    lines.forEach((l, k) => {
+      if (!keep[k]) { gap = true; return; }
+      if (gap) { const g = document.createElement('span'); g.className = 'l'; g.textContent = '⋯'; diffEl.append(g); gap = false; }
+      const s = document.createElement('span');
+      s.className = `l ${l.type}`;
+      s.textContent = `${l.type === 'add' ? '+ ' : l.type === 'del' ? '− ' : '  '}${l.text}`;
+      diffEl.append(s);
+    });
+  } catch (e) {
+    $('history-note').textContent = `Could not load that version: ${errorText(e)}`;
+  }
+}
+
+function restoreVersion() {
+  if (!ws || !historyBytes || !historyPath) return;
+  ws.put(historyPath, historyBytes);
+  open.delete(historyPath);
+  persistDrafts();
+  $<HTMLDialogElement>('history-dialog').close();
+  const p = historyPath;
+  closeEditor();
+  void openFile(p);
+  setStatus('Older version loaded into the editor. Review it, then Save to keep it.');
+}
+
 // ---------- File operations ----------
 
 function targetDir(): string {
@@ -592,10 +982,6 @@ function projectPath(input: string): string | null {
   const r = cleanPath(joinPath(projectRoot(), input.replace(/^\/+/, '')));
   if ('error' in r) { alert(r.error); return null; }
   return r.path;
-}
-
-function relative(path: string) {
-  return path.slice(projectRoot().length + 1);
 }
 
 function newFile() {
@@ -656,6 +1042,7 @@ function renameSelected() {
   if (cur && ws!.exists(cur)) void openFile(cur);
   else renderTree();
   setEnabled();
+  scheduleIndex(300);
 }
 
 function deleteSelected() {
@@ -673,6 +1060,7 @@ function deleteSelected() {
   persistDrafts();
   renderTree();
   setEnabled();
+  scheduleIndex(300);
 }
 
 async function downloadSelected() {
@@ -696,44 +1084,183 @@ async function downloadZip() {
   }
 }
 
-// ---------- Dialogs ----------
+// ---------- Repository setup (compile workflow) ----------
+
+async function checkSetup() {
+  if (!ws) return;
+  try {
+    const st = await setupStatus(ws.files);
+    if (!st.needed) { hideBanner(); return; }
+    const text = st.missing.length
+      ? 'This repository is not set up for compiling yet.'
+      : 'A newer version of the compile workflow is available.';
+    showBanner(text, 'Set up', () => openSetup());
+  } catch (e) {
+    console.error('Setup check failed', e);
+  }
+}
+
+async function openSetup() {
+  if (!ws) return;
+  const st = await setupStatus(ws.files);
+  const parts: string[] = [];
+  if (st.missing.length) parts.push(`Missing: ${st.missing.join(', ')}.`);
+  if (st.outdated.length) parts.push(`Out of date: ${st.outdated.join(', ')}.`);
+  $('setup-text').textContent = parts.join(' ') || 'Everything is already set up.';
+  $('setup-error').textContent = ws.dirty ? 'You have unsaved changes. Save them first: setting up commits on its own.' : '';
+  ($('setup-ok') as HTMLButtonElement).disabled = ws.dirty;
+  $<HTMLDialogElement>('setup-dialog').showModal();
+}
+
+async function runSetup() {
+  if (!ws) return;
+  const err = $('setup-error');
+  if (ws.dirty) { err.textContent = 'Save your other changes first.'; return; }
+  const st = await setupStatus(ws.files);
+  const paths = [...st.missing, ...st.outdated];
+  if (!ws.files.get('.gitignore')) paths.push('.gitignore');
+  err.textContent = 'Setting up…';
+  for (const p of paths) ws.put(p, encodeText(SETUP_FILES[p]));
+  try {
+    await ws.save('Set up Prism compile workflow (Prism web)');
+  } catch (e) {
+    for (const p of paths) ws.revert(p);
+    const msg = errorText(e);
+    err.textContent = /workflow|403|404|refus/i.test(msg)
+      ? `GitHub refused the workflow files. Edit your token on GitHub and give it "Workflows: Read and write" (plus Contents and Actions), then try again. (${msg})`
+      : `Set up failed: ${msg}`;
+    renderTree();
+    setEnabled();
+    return;
+  }
+  $<HTMLDialogElement>('setup-dialog').close();
+  await afterRemoteChange();
+  setStatus('Repository set up. You can remove the Workflows permission from your token now.');
+}
+
+// ---------- Dialogs: connection, unlock, preferences, projects ----------
+
+function selectedMode(): store.Mode {
+  return (document.querySelector<HTMLInputElement>('input[name="s-mode"]:checked')?.value as store.Mode | undefined) ?? 'device';
+}
+
+function syncPassField() {
+  $('s-pass-label').hidden = selectedMode() !== 'encrypted';
+}
 
 function openSettings(error = '') {
-  const s = settings;
-  $<HTMLInputElement>('s-owner').value = s?.owner ?? '';
-  $<HTMLInputElement>('s-repo').value = s?.repo ?? 'prism-data';
-  $<HTMLInputElement>('s-branch').value = s?.branch ?? 'main';
-  $<HTMLInputElement>('s-token').value = s?.token ?? '';
+  const last = settings ?? store.lastConnection();
+  $<HTMLInputElement>('s-owner').value = last?.owner ?? '';
+  $<HTMLInputElement>('s-repo').value = last?.repo ?? 'prism-data';
+  $<HTMLInputElement>('s-branch').value = last?.branch ?? 'main';
+  const tokenInput = $<HTMLInputElement>('s-token');
+  tokenInput.value = '';
+  tokenInput.placeholder = settings ? '(unchanged — paste a new token to replace it)' : 'github_pat_…';
+  $<HTMLInputElement>('s-pass').value = '';
+  const mode = settings?.mode ?? 'device';
+  const radio = document.querySelector<HTMLInputElement>(`input[name="s-mode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
+  syncPassField();
   $('s-error').textContent = error;
-  $<HTMLDialogElement>('settings-dialog').showModal();
+  const dlg = $<HTMLDialogElement>('settings-dialog');
+  if (!dlg.open) dlg.showModal();
 }
 
 async function submitSettings() {
+  const err = $('s-error');
+  const mode = selectedMode();
+  const pass = $<HTMLInputElement>('s-pass').value;
   const next: store.Settings = {
     owner: $<HTMLInputElement>('s-owner').value.trim(),
     repo: $<HTMLInputElement>('s-repo').value.trim(),
     branch: $<HTMLInputElement>('s-branch').value.trim() || 'main',
-    token: $<HTMLInputElement>('s-token').value.trim(),
+    token: $<HTMLInputElement>('s-token').value.trim() || settings?.token || '',
+    mode,
   };
-  const err = $('s-error');
   if (!next.owner || !next.repo || !next.token) { err.textContent = 'Owner, repository and token are required.'; return; }
+  if (!/^[A-Za-z0-9-]+$/.test(next.owner) || !/^[A-Za-z0-9._-]+$/.test(next.repo)) { err.textContent = 'Owner or repository contains characters GitHub does not allow.'; return; }
+  if (mode === 'encrypted' && pass.length < 8) { err.textContent = 'Choose a passphrase of at least 8 characters.'; return; }
   if (ws?.dirty && (next.owner !== settings?.owner || next.repo !== settings?.repo || next.branch !== settings?.branch)
     && !confirm('You have unsaved changes for the current repository. They stay as a draft only for text files. Switch anyway?')) return;
   err.textContent = 'Checking…';
   try {
     const test = new GitHub(next.token, next.owner, next.repo);
-    const info = await test.getRepo();
+    const { info, classicScopes } = await test.checkToken();
     if (!info.permissions?.push) throw new Error('This token cannot write to the repository (needs Contents: read and write).');
-    if (!(await test.getRefSha(next.branch))) throw new Error(`Branch "${next.branch}" does not exist.`);
+    if (!(await test.getRefSha(next.branch))) throw new Error(`Branch "${next.branch}" does not exist. If the repository is empty, create it with "Add a README file" ticked.`);
+    if (classicScopes !== null && !confirm(
+      `This is a CLASSIC token (scopes: ${classicScopes || 'none'}). It can reach ALL of your GitHub repositories, not just this one. ` +
+      'A fine-grained token limited to this repository is much safer.\n\nUse the classic token anyway?')) { err.textContent = ''; return; }
     if (!info.private && !confirm('WARNING: this repository is PUBLIC, so everyone can read your files. Continue anyway?')) { err.textContent = ''; return; }
   } catch (e) {
     err.textContent = errorText(e);
     return;
   }
-  if (!store.saveSettings(next)) err.textContent = 'Connected, but this browser blocks storage: you will need to enter the token again next time.';
-  settings = next;
+  // Changing how the token is kept also changes where unsaved drafts live: move them, so no plain copy is left behind.
+  const sameRepo = !!settings && settings.owner === next.owner && settings.repo === next.repo && settings.branch === next.branch;
+  const carried = sameRepo ? await store.loadDrafts(settings!) : null;
+  try {
+    if (!(await store.saveSettings(next, mode === 'encrypted' ? pass : undefined))) {
+      err.textContent = 'Connected, but this browser blocks storage: you will need to enter the token again next time.';
+    }
+    if (sameRepo && carried && settings!.mode !== next.mode) {
+      store.dropDrafts(settings!);
+      await store.saveDrafts(next, carried);
+    }
+  } catch (e) {
+    err.textContent = errorText(e);
+    return;
+  }
   $<HTMLDialogElement>('settings-dialog').close();
-  await connect();
+  await connect(next);
+}
+
+let pendingLocked: store.Stored | null = null;
+function openUnlock(stored: store.Stored) {
+  pendingLocked = stored;
+  $<HTMLInputElement>('u-pass').value = '';
+  $('u-error').textContent = '';
+  $<HTMLDialogElement>('unlock-dialog').showModal();
+  $<HTMLInputElement>('u-pass').focus();
+}
+
+async function submitUnlock() {
+  if (!pendingLocked) return;
+  const err = $('u-error');
+  err.textContent = 'Unlocking…';
+  try {
+    const s = await store.unlockSettings(pendingLocked, $<HTMLInputElement>('u-pass').value);
+    $<HTMLDialogElement>('unlock-dialog').close();
+    await connect(s);
+  } catch (e) {
+    err.textContent = e instanceof WrongPassphrase ? e.message : errorText(e);
+  }
+}
+
+function openPrefs() {
+  $<HTMLSelectElement>('pf-theme').value = prefs.theme;
+  $<HTMLInputElement>('pf-size').value = String(prefs.fontSize);
+  $<HTMLSelectElement>('pf-jump').value = prefs.pdfJump;
+  $<HTMLSelectElement>('pf-lang').value = prefs.spellLang;
+  $<HTMLInputElement>('pf-spell').checked = prefs.spellcheck;
+  $<HTMLInputElement>('pf-follow').checked = prefs.followCursor;
+  $<HTMLDialogElement>('prefs-dialog').showModal();
+}
+
+function prefsChanged() {
+  const before = prefs;
+  prefs = sanitize({
+    theme: $<HTMLSelectElement>('pf-theme').value as Prefs['theme'],
+    fontSize: Number($<HTMLInputElement>('pf-size').value),
+    spellcheck: $<HTMLInputElement>('pf-spell').checked,
+    spellLang: $<HTMLSelectElement>('pf-lang').value,
+    pdfJump: $<HTMLSelectElement>('pf-jump').value as Prefs['pdfJump'],
+    followCursor: $<HTMLInputElement>('pf-follow').checked,
+  });
+  savePrefs(prefs);
+  applyPrefs(prefs);
+  pdf.jumpMode = prefs.pdfJump;
+  if (before.theme !== prefs.theme || before.spellcheck !== prefs.spellcheck || before.spellLang !== prefs.spellLang) rebuildEditorStates();
 }
 
 let projectDialogMode: 'new' | 'edit' = 'new';
@@ -803,8 +1330,10 @@ function submitProjectDialog() {
 
 // ---------- Wiring ----------
 
-$('settings').addEventListener('click', () => openSettings());
+$('settings').addEventListener('click', openPrefs);
+$('connection').addEventListener('click', () => openSettings());
 $('welcome-connect').addEventListener('click', () => openSettings());
+$('banner-close').addEventListener('click', hideBanner);
 
 // Resizable panels (desktop). Widths are remembered in this browser.
 (() => {
@@ -822,8 +1351,8 @@ $('welcome-connect').addEventListener('click', () => openSettings());
     if (saved) ({ filesW, edFrac } = saved);
   } catch { /* storage blocked */ }
   const clamp = () => {
-    filesW = Math.min(520, Math.max(160, filesW));
-    edFrac = Math.min(0.8, Math.max(0.2, edFrac));
+    filesW = Math.min(520, Math.max(160, Number(filesW) || 260));
+    edFrac = Math.min(0.8, Math.max(0.2, Number(edFrac) || 0.5));
     apply(filesW, edFrac);
   };
   const remember = () => { try { localStorage.setItem(KEY, JSON.stringify({ filesW, edFrac })); } catch { /* ignore */ } };
@@ -866,21 +1395,34 @@ $('welcome-connect').addEventListener('click', () => openSettings());
     });
   }
 })();
+
 $('s-cancel').addEventListener('click', () => $<HTMLDialogElement>('settings-dialog').close());
 $('s-save').addEventListener('click', () => void submitSettings());
+for (const r of document.querySelectorAll('input[name="s-mode"]')) r.addEventListener('change', syncPassField);
 $('s-forget').addEventListener('click', () => {
-  if (!confirm('Remove the token and settings from this browser? Unsaved drafts stay.')) return;
-  store.saveSettings(null);
-  settings = null;
+  if (!confirm('Remove the token, unsaved drafts and preferences from this browser?\n\nUnsaved changes that were never saved to GitHub will be lost.')) return;
+  store.clearAllLocalData();
   location.reload();
 });
+$('u-ok').addEventListener('click', () => void submitUnlock());
+$('u-forget').addEventListener('click', () => {
+  if (!confirm('Forget the stored token and any drafts kept in this browser?')) return;
+  store.clearAllLocalData();
+  location.reload();
+});
+$('pf-close').addEventListener('click', () => $<HTMLDialogElement>('prefs-dialog').close());
+for (const id of ['pf-theme', 'pf-size', 'pf-jump', 'pf-lang', 'pf-spell', 'pf-follow']) $(id).addEventListener('change', prefsChanged);
 $('p-cancel').addEventListener('click', () => $<HTMLDialogElement>('project-dialog').close());
 $('p-ok').addEventListener('click', submitProjectDialog);
+$('setup-cancel').addEventListener('click', () => $<HTMLDialogElement>('setup-dialog').close());
+$('setup-ok').addEventListener('click', () => void runSetup());
+$('history-close').addEventListener('click', () => $<HTMLDialogElement>('history-dialog').close());
+$('history-restore').addEventListener('click', restoreVersion);
 for (const d of document.querySelectorAll('dialog')) {
   d.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+    if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT' && (e.target as HTMLInputElement).type !== 'checkbox' && (e.target as HTMLInputElement).type !== 'radio') {
       e.preventDefault();
-      (d.querySelector('button.primary') as HTMLButtonElement).click();
+      (d.querySelector('button.primary') as HTMLButtonElement | null)?.click();
     }
   });
 }
@@ -890,6 +1432,8 @@ $('new-project').addEventListener('click', () => openProjectDialog('new'));
 $('project-settings').addEventListener('click', () => openProjectDialog('edit'));
 $('save').addEventListener('click', () => void save());
 $('compile').addEventListener('click', () => void runCompile());
+$('forward').addEventListener('click', () => void forwardSearch());
+$('history').addEventListener('click', () => void openHistory());
 $('new-file').addEventListener('click', newFile);
 $('upload-btn').addEventListener('click', () => $<HTMLInputElement>('upload').click());
 $<HTMLInputElement>('upload').addEventListener('change', (e) => {
@@ -909,13 +1453,25 @@ $('zoom-fit').addEventListener('click', () => pdf.setZoom('fit'));
 $('download-pdf').addEventListener('click', () => {
   if (lastBuild?.pdf && project) download(`${project.Project}.pdf`, lastBuild.pdf, 'application/pdf');
 });
+for (const t of ['files', 'outline', 'search'] as const) $(`tab-${t}`).addEventListener('click', () => setSideTab(t));
+$('search-form').addEventListener('submit', (e) => { e.preventDefault(); clearTimeout(searchTimer); void runSearch(); });
+for (const id of ['search-q', 'search-case', 'search-re']) {
+  $(id).addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => void runSearch(), 300); });
+  $(id).addEventListener('change', () => void runSearch());
+}
 for (const b of document.querySelectorAll<HTMLButtonElement>('.view-tabs button')) {
   b.addEventListener('click', () => { document.body.dataset.view = b.dataset.view!; });
 }
 
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void save(); }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !compiling) { e.preventDefault(); void runCompile(); }
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); void save(); }
+  if (mod && e.key === 'Enter' && !compiling) { e.preventDefault(); void runCompile(); }
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'f' && ws) {
+    e.preventDefault();
+    showView('files');
+    setSideTab('search');
+  }
 });
 window.addEventListener('beforeunload', (e) => {
   flushEdits();
@@ -925,7 +1481,14 @@ window.addEventListener('beforeunload', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && ws && !saving) void refresh();
 });
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (prefs.theme === 'auto') rebuildEditorStates(); });
 
+// ---------- Start ----------
+
+applyPrefs(prefs);
 setEnabled();
 closeEditor();
-void connect();
+const loaded = store.loadSettings();
+if (!loaded) openSettings();
+else if ('locked' in loaded) openUnlock(loaded.locked);
+else void connect(loaded.settings);

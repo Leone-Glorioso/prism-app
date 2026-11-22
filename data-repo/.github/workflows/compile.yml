@@ -32,23 +32,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      # persist-credentials: false keeps the job token out of .git/config, which the compile container can read.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
+      # The project's TeX code is untrusted input: run it with no network, no privileges and no job secrets.
       - name: Compile in TeX Live container
         env:
           PROJECT: ${{ inputs.project }}
         run: |
           # max_print_line etc.: unwrapped log lines, so file:line errors are not split across lines.
-          docker run --rm -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e COMPILE_TIMEOUT_SECONDS=1800 \
+          docker run --rm \
+            --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 1024 --memory 6g \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp/home \
+            -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e COMPILE_TIMEOUT_SECONDS=1800 \
             -e max_print_line=10000 -e error_line=254 -e half_error_line=238 \
             -v "$GITHUB_WORKSPACE:/work" -w /work "$TEXLIVE_IMAGE" bash -c '
-              # Let XeLaTeX/LuaLaTeX find TeX Live fonts by name (as MiKTeX does on Windows).
+              mkdir -p "$HOME/.config/fontconfig"
+              # Let XeLaTeX/LuaLaTeX find TeX Live fonts by name (as MiKTeX does on Windows); per-user, no root needed.
               conf="$(kpsewhich -var-value TEXMFSYSVAR)/fonts/conf/texlive-fontconfig.conf"
-              if [ -f "$conf" ] && [ -d /etc/fonts/conf.d ] && command -v fc-cache >/dev/null; then
-                cp "$conf" /etc/fonts/conf.d/09-texlive.conf && fc-cache -fs >/dev/null 2>&1 || true
+              if [ -f "$conf" ] && command -v fc-cache >/dev/null; then
+                cp "$conf" "$HOME/.config/fontconfig/fonts.conf" && fc-cache -fs >/dev/null 2>&1 || true
               fi
-              bash .github/scripts/compile.sh "$PROJECT" /work/.prism-out
-              chmod -R a+rwX /work/.prism-out'
+              bash .github/scripts/compile.sh "$PROJECT" /work/.prism-out'
 
       - name: Publish result to builds branch
         env:

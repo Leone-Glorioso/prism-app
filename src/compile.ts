@@ -22,6 +22,8 @@ export interface Build {
   result: BuildResult;
   log: string;
   pdf: Uint8Array | null;
+  /** Downloads the SyncTeX data on first use (it can be large). Null when the build has none. */
+  synctex: () => Promise<Uint8Array | null>;
 }
 
 const decoder = new TextDecoder(); // logs may contain broken UTF-8 (TeX wraps lines mid-character)
@@ -33,7 +35,9 @@ export async function fetchBuild(gh: GitHub, project: string): Promise<Build | n
   const result = JSON.parse(decoder.decode(await gh.getBlob(files.get('result.json')!))) as BuildResult;
   const log = files.has('output.log') ? decoder.decode(await gh.getBlob(files.get('output.log')!)) : '';
   const pdf = files.has('output.pdf') ? await gh.getBlob(files.get('output.pdf')!) : null;
-  return { result, log, pdf };
+  const syncSha = files.get('output.synctex.gz');
+  let sync: Promise<Uint8Array | null> | null = null;
+  return { result, log, pdf, synctex: () => (sync ??= syncSha ? gh.getBlob(syncSha) : Promise.resolve(null)) };
 }
 
 export type Phase = 'starting' | 'queued' | 'in_progress' | 'fetching';

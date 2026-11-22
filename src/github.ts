@@ -77,6 +77,32 @@ export class GitHub {
     return this.json<{ private: boolean; default_branch: string; permissions?: { push?: boolean } }>('GET', '');
   }
 
+  /**
+   * Checks the token against the repository. `classicScopes` is non-null for classic tokens and OAuth tokens
+   * (GitHub sends X-OAuth-Scopes only for those): they reach ALL the user's repositories, unlike fine-grained tokens.
+   */
+  async checkToken() {
+    const res = await this.request('GET', '');
+    const info = (await res.json()) as { private: boolean; default_branch: string; permissions?: { push?: boolean } };
+    return { info, classicScopes: res.headers.get('x-oauth-scopes') };
+  }
+
+  async listCommits(path: string, branch: string, perPage = 30) {
+    const q = new URLSearchParams({ sha: branch, path, per_page: String(perPage) });
+    return this.json<{ sha: string; html_url: string; commit: { message: string; author: { name: string; date: string } | null } }[]>('GET', `/commits?${q}`);
+  }
+
+  /** File content at a commit. Null when the file did not exist there. */
+  async getFileAt(path: string, ref: string): Promise<Uint8Array | null> {
+    try {
+      const res = await this.request('GET', `/contents/${seg(path)}?ref=${encodeURIComponent(ref)}`, { accept: 'application/vnd.github.raw+json', immutable: true });
+      return new Uint8Array(await res.arrayBuffer());
+    } catch (e) {
+      if (e instanceof GitHubError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
   async getRefSha(ref: string): Promise<string | null> {
     try {
       const r = await this.json<{ object: { sha: string } }>('GET', `/git/ref/heads/${seg(ref)}`);

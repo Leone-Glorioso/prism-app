@@ -1,11 +1,8 @@
+# Keep the pinned GitHub Actions current. npm updates are handled by hand: the advisories that exist are in
+# development-only tools, and the major upgrades they ask for need Node 20+.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 3

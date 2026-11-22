@@ -88,9 +88,10 @@ Without accounts, each new browser needs the repository and token typed once. Wi
 server, so accounts use a free **Supabase** project that *you* own and that only stores a small record per person.
 
 **What is stored there:** email, a hashed password (or the Google/GitHub identity), display name, picture, preferences,
-shortcuts and — only if you press *Save my connection to my account* — your repository and token **encrypted in your browser with a
-passphrase that never leaves it** (AES-256-GCM, PBKDF2 600,000 rounds). The service cannot read it. On a new browser you sign in
-and type that passphrase once. **Your project files never touch the account service.** No third-party script runs in the page: sign-in
+shortcuts and — only if you press *Save my connection to my account* — your repository and token, in one of two ways you choose:
+**sign-in only** (stored readable in your service project: a new browser opens your projects right after sign-in; whoever gets into that
+account or steals your session gets the token) or **with a passphrase** (encrypted in your browser first, AES-256-GCM, PBKDF2 600,000 rounds; the
+service cannot read it; a new browser needs sign-in plus the passphrase). **Your project files never touch the account service.** No third-party script runs in the page: sign-in
 is plain requests to that one service address (the page's security policy allows exactly that address and `api.github.com`).
 
 **Owner's one-time setup** (about 15 minutes):

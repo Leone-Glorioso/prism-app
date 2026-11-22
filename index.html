@@ -340,9 +340,16 @@
 
   <dialog id="vault-dialog" aria-labelledby="vault-title">
     <h2 id="vault-title">Vault passphrase</h2>
+    <fieldset class="modes">
+      <legend>How should it be protected?</legend>
+      <label class="radio"><input type="radio" name="v-mode" value="plain" checked><span><strong>Sign-in only</strong> — a new browser opens your projects right after you sign in. The token is stored readable in your account service, so whoever gets into that account (or steals your signed-in session) gets the token.</span></label>
+      <label class="radio"><input type="radio" name="v-mode" value="sealed"><span><strong>With a passphrase</strong> — encrypted in this browser first; the service cannot read it. A new browser needs the sign-in and the passphrase.</span></label>
+    </fieldset>
     <p id="vault-text" class="hint"></p>
-    <label>Passphrase<input id="v-pass" type="password" autocomplete="off" spellcheck="false"></label>
-    <label id="v-pass2-label">Repeat the passphrase<input id="v-pass2" type="password" autocomplete="off" spellcheck="false"></label>
+    <div id="v-pass-box" hidden>
+      <label>Passphrase (8 or more characters)<input id="v-pass" type="password" autocomplete="off" spellcheck="false"></label>
+      <label id="v-pass2-label">Repeat the passphrase<input id="v-pass2" type="password" autocomplete="off" spellcheck="false"></label>
+    </div>
     <p id="v-error" class="error" role="alert"></p>
     <div class="dialog-buttons">
       <span class="sep"></span>

@@ -53,7 +53,8 @@ service-role key. Without that file there is no account code path and the page p
   provider secrets stay at the account service; the browser holds a one-time code, then short-lived tokens. The code is removed from the address bar
   at once. No Google or GitHub script, iframe or pop-up runs in the page.
 * **What the service stores per user:** email, hashed password or provider identity, display name, a picture (up to 120 KB, validated as a PNG/JPEG/WebP
-  data URL), preferences, shortcuts and, only if the user presses *Save my connection to my account*, the GitHub connection **sealed in the browser**
+  data URL), preferences, shortcuts and, only if the user presses *Save my connection to my account*, the GitHub connection, by the user's choice either
+  **stored readable ("sign-in only": convenient, but whoever reaches the account record or steals the session gets the token)** or **sealed in the browser**
   with a vault passphrase (AES-256-GCM, PBKDF2-SHA256 600,000 rounds, fresh salt and IV; the passphrase is never sent). The service cannot read it. Project
   files and compile output never go to the service.
 * **Row-level security** (`supabase/setup.sql`): the table has no access for anonymous users; a signed-in user can read and write only the row with their own
@@ -101,7 +102,7 @@ Compiles of one project cancel each other (newest wins).
 
 ## Checked on 22 November 2026
 
-* Unit tests (85): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
+* Unit tests (86): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
   logic; path validation; SyncTeX; log parsing; completion (citations, slash commands, environments); shortcuts; the account client
   (sign-up, sign-in, PKCE exchange, token refresh, hostile server data, sealed connection, sync) against a simulated service.
 * Accounts were exercised in a real browser against a simulated account service (sign-up with confirmation, sign-in, Google/GitHub redirect with PKCE,

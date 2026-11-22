@@ -18,6 +18,7 @@ export interface AccountApi {
   user(): CloudUser | null;
   syncError(): string;
   hasVault(): boolean;
+  hasPlain(): boolean;
   connected(): boolean;
   signIn(): void;
   signOut(): Promise<void>;
@@ -231,7 +232,7 @@ export function initSettingsView(ctx: SettingsCtx) {
     // vault
     body.append(el('h3', {}, 'GitHub connection in your account'));
     if (api.hasVault()) {
-      body.append(el('p', {}, el('span', { class: 'status-pill' }, 'Saved'), ' Your repository and token are stored in your account, sealed with your vault passphrase. On a new browser, sign in and enter the passphrase.'));
+      body.append(el('p', {}, el('span', { class: 'status-pill' }, 'Saved'), api.hasPlain() ? ' Your repository and token are stored in your account without a passphrase: signing in on a new browser opens your projects.' : ' Your repository and token are stored in your account, sealed with your vault passphrase. On a new browser, sign in and enter the passphrase.'));
       const upd = el('button', { type: 'button', class: 'btn sm' }, 'Replace with the current connection');
       upd.disabled = !api.connected();
       upd.addEventListener('click', api.saveConnection);
@@ -239,7 +240,7 @@ export function initSettingsView(ctx: SettingsCtx) {
       rem.addEventListener('click', api.removeConnection);
       body.append(el('div', { class: 'btn-row' }, upd, rem));
     } else {
-      body.append(el('p', {}, 'Save your repository and token once, protected by a passphrase only you know, so a new browser needs only your sign-in and that passphrase. The account service cannot read it.'));
+      body.append(el('p', {}, 'Save your repository and token once, so a new browser needs only your sign-in (or sign-in plus a passphrase, if you choose that).'));
       const save = el('button', { type: 'button', class: 'btn primary' }, 'Save my connection to my account');
       save.disabled = !api.connected();
       save.addEventListener('click', api.saveConnection);

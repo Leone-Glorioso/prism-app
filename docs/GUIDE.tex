@@ -218,7 +218,7 @@ Without an account a new browser knows nothing: you would enter repository and t
 sign up (once) and \emph{save your connection to your account}, any new browser needs only:
 \begin{enumerate}
   \item \textbf{Sign in}: with email and password, with Google, or with GitHub.
-  \item \textbf{Your vault passphrase}, once per browser.
+  \item \textbf{Your vault passphrase}, once per browser, \emph{only if} you chose to protect the saved connection with one. With the ``sign-in only'' choice there is no second step.
 \end{enumerate}
 Then your repository opens, and your settings, shortcuts, name and picture are already in place.
 
@@ -229,7 +229,7 @@ Then your repository opens, and your settings, shortcuts, name and picture are a
 \textbf{Data} & \textbf{Who can read it}\\\midrule
 Email, hashed password or Google/GitHub identity & the account service (that is what an account is)\\
 Display name, picture, preferences, shortcuts & the account service\\
-Repository, branch and \textbf{token}, if you press \emph{Save my connection} & \emph{nobody}: encrypted in your browser with your passphrase (AES-256-GCM, key from PBKDF2 with 600\,000 rounds) before it is sent\\
+Repository, branch and \textbf{token}, if you press \emph{Save my connection} & your choice. \emph{Sign-in only}: stored readable, so whoever reaches the account record or steals the session gets the token. \emph{With a passphrase}: nobody but you, encrypted in your browser first (AES-256-GCM, PBKDF2 with 600\,000 rounds)\\
 Your \LaTeX{} files, PDFs, logs & never sent to the account service; only your repository holds them\\
 \bottomrule
 \end{tabular}
@@ -343,7 +343,7 @@ Package or program missing during compile & Everything in \TeX{} Live is availab
   \item Main files: \fpath{src/main.ts} (orchestration), \fpath{src/complete.ts} (suggestions), \fpath{src/editor.ts}, \fpath{src/shortcuts.ts}, \fpath{src/prefs.ts}, \fpath{src/settingsview.ts},
         \fpath{src/cloud.ts} (account client), \fpath{src/account.ts} (record, sealed connection, sync), \fpath{src/workspace.ts} (Git data API, saving, merging),
         \fpath{src/compile.ts} and \fpath{data-repo/} (the compile workflow every projects repository receives).
-  \item Commands: \verb|npm install|, \verb|npm test| (85 tests), \verb|npm run build|, \verb|npm run preview|. Node 18 or newer locally; the deploy workflow uses Node 20.
+  \item Commands: \verb|npm install|, \verb|npm test| (86 tests), \verb|npm run build|, \verb|npm run preview|. Node 18 or newer locally; the deploy workflow uses Node 20.
   \item Accounts are compiled in only when \fpath{cloud.config.json} exists. For tests set \verb|LEOTEX_CLOUD_CONFIG| to a file that points at a local test service.
   \item Naming: the product is \leotex{}; the repository, organisation and file names (\fpath{prism-app}, \fpath{prism-latex}, \fpath{prism-data}, \fpath{prism-projects.json}, \fpath{prism-compiler.json}, browser
         keys beginning with \texttt{prism.}) are historical and unchanged on purpose.
@@ -351,7 +351,7 @@ Package or program missing during compile & Everything in \TeX{} Live is availab
 
 \section{What was verified}
 \begin{itemize}
-  \item 85 automated tests pass: token vault, saving and merging, SyncTeX, log parsing, completion (citations, slash commands, environments), shortcuts, the account client
+  \item 86 automated tests pass: token vault, saving and merging, SyncTeX, log parsing, completion (citations, slash commands, environments), shortcuts, the account client
         (sign-up, sign-in, PKCE exchange, refresh, hostile server data, sealed connection, sync).
   \item In a real browser the editor was driven through typing: \texttt{/cit} + Enter inserts the command and lists the project's bibliography; typing narrows the list at once; \texttt{\textbackslash begin\{itemize\}}
         writes the \texttt{\textbackslash end}; Ctrl+S commits; Ctrl+B and a remapped shortcut edit the text; the settings page, themes, accents, picture upload and phone layout work.

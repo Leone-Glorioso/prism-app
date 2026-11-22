@@ -207,3 +207,25 @@ describe('AccountSync', () => {
     expect(stored.vault).toEqual(vault);
   });
 });
+
+describe('connection stored without a passphrase', () => {
+  it('is validated like any server data and replaces a sealed one', async () => {
+    const good = { owner: 'me', repo: 'prism-data', branch: 'main', token: 'github_pat_x' };
+    expect(parseRecord({ plain: good }, '2026-01-01T00:00:00Z').plain).toEqual({ ...good, expires: undefined });
+    expect(parseRecord({ plain: { ...good, owner: 'a/b' } }, '2026-01-01T00:00:00Z').plain).toBeUndefined();
+    expect(parseRecord({ plain: 'x' }, '2026-01-01T00:00:00Z').plain).toBeUndefined();
+
+    const f = make();
+    f.svc.users.set('a@example.com', { id: 'u1', password: 'pw' });
+    await f.cloud.signIn('a@example.com', 'pw');
+    const local = { profile: { name: '', avatar: '' }, prefs: { ...defaultPrefs }, shortcuts: defaultShortcuts() };
+    const sync = new AccountSync(f.cloud, () => local, () => undefined, new MemStore());
+    await sync.setVault(await sealConnection('a long passphrase', { ...good }));
+    await sync.setPlain(good);
+    const row = f.svc.row!.data as { plain: unknown; vault?: unknown };
+    expect(row.plain).toMatchObject(good);
+    expect(row.vault).toBeUndefined();
+    await sync.clearStored();
+    expect((f.svc.row!.data as { plain?: unknown }).plain).toBeUndefined();
+  });
+});

@@ -13,6 +13,7 @@ import { applyIcons, icon } from './icons';
 import { applyPrefs, isDark, loadPrefs, Prefs, sanitize, savePrefs } from './prefs';
 import { Cloud } from './cloud';
 import { AccountSync, openConnection, sanitizeProfile, sealConnection } from './account';
+import type { Connection } from './account';
 import type { Profile } from './account';
 import { loadProfile, paintAvatar, saveProfile } from './profile';
 import { ACTIONS, comboOf, formatCombo, loadShortcuts, saveShortcuts } from './shortcuts';
@@ -1448,7 +1449,7 @@ function renderBanner() {
   if (authProblem) showBanner('GitHub no longer accepts your token (it expired or was revoked). Your edits are kept in this browser. Enter a new token to continue.', 'Update token', () => openSettings(), 'error');
   else if (ex) showBanner(ex.text, 'Update token', () => openSettings(), ex.level === 'expired' ? 'error' : 'warn');
   else if (setupBanner) showBanner(setupBanner, 'Set up', () => openSetup());
-  else if (vaultOffer) showBanner('Save your connection to your account, protected by a passphrase, so other browsers need only your sign-in.', 'Save', () => openVaultDialog());
+  else if (vaultOffer) showBanner('Save your connection to your account so other browsers need only your sign-in.', 'Save', () => openVaultDialog());
   else hideBanner();
 }
 
@@ -2093,14 +2094,15 @@ const settingsView = initSettingsView({
     configured: !!cloud,
     user: () => cloud?.session?.user ?? null,
     syncError: () => sync?.lastError ?? '',
-    hasVault: () => !!sync?.vault,
+    hasVault: () => !!(sync?.vault || sync?.plain),
+    hasPlain: () => !!sync?.plain,
     connected: () => !!settings,
     signIn: () => openAuthDialog(),
     signOut: () => signOutNow(),
     saveConnection: () => openVaultDialog(),
     removeConnection: () => void removeVault(),
     changePassword: (pw) => cloud!.changePassword(pw),
-    deleteAccount: async () => { await cloud!.deleteAccount(); sync!.vault = undefined; afterAccountChange(); },
+    deleteAccount: async () => { await cloud!.deleteAccount(); sync!.vault = undefined; sync!.plain = undefined; afterAccountChange(); },
     syncNow: async () => { await sync!.sync(); settingsView.refresh(); },
   },
 });
@@ -2187,14 +2189,23 @@ async function afterSignIn() {
   }
   accountNotice = '';
   afterAccountChange();
-  if (ws && !sync.vault && !vaultOffered) { vaultOffered = true; vaultOffer = true; renderBanner(); }
+  if (!ws && sync.plain && !settings && !plainTried) { plainTried = true; await connectFromPlain(sync.plain); return; }
+  if (ws && !sync.vault && !sync.plain && !vaultOffered) { vaultOffered = true; vaultOffer = true; renderBanner(); }
 }
 let vaultOffered = false;
+let plainTried = false;
+
+/** Opens the connection saved without a passphrase (kept on this device, like a normal connect). */
+async function connectFromPlain(c: Connection) {
+  const next: store.Settings = { owner: c.owner, repo: c.repo, branch: c.branch, token: c.token, expires: c.expires, mode: 'device' };
+  if (!(await store.saveSettings(next))) setStatus('Connected, but this browser blocks storage: you will need to sign in again next time.', 'error');
+  await connect(next);
+}
 
 async function signOutNow() {
   if (!cloud) return;
   await cloud.signOut();
-  if (sync) sync.vault = undefined;
+  if (sync) { sync.vault = undefined; sync.plain = undefined; }
   vaultOffer = false;
   afterAccountChange();
   setStatus('Signed out. The token and drafts in this browser were kept; use "Clear this browser" on a shared computer.');
@@ -2203,7 +2214,10 @@ async function signOutNow() {
 function openVaultDialog() {
   if (!settings || !sync) return;
   $('vault-title').textContent = 'Save my connection to my account';
-  $('vault-text').textContent = 'Choose a vault passphrase. Your repository and token are encrypted with it in this browser before they are sent, so the account service cannot read them. On a new browser you sign in and type this passphrase. It cannot be recovered: if you forget it, remove the saved connection and save it again with a new one.';
+  $('vault-text').textContent = 'A passphrase cannot be recovered: if you forget it, remove the saved connection and save it again.';
+  const plainRadio = document.querySelector<HTMLInputElement>('input[name="v-mode"][value="plain"]');
+  if (plainRadio) plainRadio.checked = true;
+  syncVaultMode();
   $<HTMLInputElement>('v-pass').value = '';
   $<HTMLInputElement>('v-pass2').value = '';
   $('v-error').textContent = '';
@@ -2212,10 +2226,25 @@ function openVaultDialog() {
   $<HTMLInputElement>('v-pass').focus();
 }
 
+const vaultMode = () => document.querySelector<HTMLInputElement>('input[name="v-mode"]:checked')?.value ?? 'plain';
+function syncVaultMode() { $('v-pass-box').hidden = vaultMode() !== 'sealed'; }
+for (const r of document.querySelectorAll('input[name="v-mode"]')) r.addEventListener('change', syncVaultMode);
+
 async function submitVault() {
   const err = $('v-error');
   const pass = $<HTMLInputElement>('v-pass').value;
   if (!settings || !sync) return;
+  if (vaultMode() === 'plain') {
+    try {
+      await sync.setPlain({ owner: settings.owner, repo: settings.repo, branch: settings.branch, token: settings.token, expires: settings.expires });
+    } catch (e) { err.textContent = errorText(e); return; }
+    $<HTMLDialogElement>('vault-dialog').close();
+    vaultOffer = false;
+    renderBanner();
+    settingsView.refresh();
+    setStatus('Connection saved to your account: sign-in alone opens it on a new browser.');
+    return;
+  }
   if (pass.length < 8) { err.textContent = 'Choose a passphrase of at least 8 characters.'; return; }
   if (pass !== $<HTMLInputElement>('v-pass2').value) { err.textContent = 'The two passphrases are not the same.'; return; }
   err.textContent = 'Encrypting…';
@@ -2235,7 +2264,7 @@ async function submitVault() {
 
 async function removeVault() {
   if (!sync || !confirm('Remove the saved connection from your account? New browsers will then ask for the GitHub token again.')) return;
-  try { await sync.setVault(undefined); } catch (e) { setStatus(`Could not update your account: ${errorText(e)}`, 'error'); }
+  try { await sync.clearStored(); } catch (e) { setStatus(`Could not update your account: ${errorText(e)}`, 'error'); }
   settingsView.refresh();
 }
 
@@ -2282,6 +2311,16 @@ function renderLanding() {
   }
 
   const name = profile.name || user.name || user.email || 'there';
+  if (sync?.plain && !settings) {
+    const open1 = el('button', { type: 'button', class: 'btn primary lg' }, 'Open my projects');
+    open1.addEventListener('click', () => void connectFromPlain(sync.plain!));
+    const out2 = el('button', { type: 'button', class: 'linklike' }, 'Sign out');
+    out2.addEventListener('click', () => void signOutNow());
+    card.append(el('h2', {}, `Welcome back, ${name}`), el('p', { class: 'hint' }, 'Your connection is saved in your account.'));
+    if (notice) card.append(notice);
+    card.append(open1, el('div', { class: 'skip' }, out2));
+    return;
+  }
   if (sync?.vault) {
     const pass = el('input', { type: 'password', autocomplete: 'current-password', spellcheck: 'false', 'aria-label': 'Vault passphrase' });
     const mode = el('select', { 'aria-label': 'Keep the token in this browser' },

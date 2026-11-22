@@ -22,6 +22,8 @@ export interface AccountRecord {
   prefs: Prefs;
   shortcuts: Partial<ShortcutMap>;
   vault?: Sealed;
+  /** The connection stored readable (the owner chose "sign-in only", no passphrase). */
+  plain?: Connection;
   updatedAt: string;
 }
 
@@ -48,6 +50,7 @@ export function parseRecord(raw: unknown, updatedAt: string): AccountRecord {
     prefs: sanitizePrefs({ ...defaultPrefs, ...prefsIn }),
     shortcuts: overrides(clean),
     vault: isSealed(r.vault) ? r.vault : undefined,
+    plain: cleanConnection(r.plain) ?? undefined,
     updatedAt: Number.isNaN(Date.parse(updatedAt)) ? new Date(0).toISOString() : updatedAt,
   };
 }
@@ -61,12 +64,19 @@ export async function sealConnection(passphrase: string, c: Connection): Promise
   return seal(await deriveKey(passphrase, salt), salt, c);
 }
 
+/** A connection read from the service or from a sealed blob; null when anything about it is off. */
+export function cleanConnection(data: unknown): Connection | null {
+  const c = (data && typeof data === 'object' ? data : null) as Partial<Connection> | null;
+  const ok = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length < 300;
+  if (!c || !ok(c.owner) || !ok(c.repo) || !ok(c.branch) || !ok(c.token) || !/^[A-Za-z0-9-]+$/.test(c.owner) || !/^[A-Za-z0-9._-]+$/.test(c.repo)) return null;
+  return { owner: c.owner, repo: c.repo, branch: c.branch, token: c.token, expires: typeof c.expires === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c.expires) ? c.expires : undefined };
+}
+
 export async function openConnection(passphrase: string, sealed: Sealed): Promise<Connection> {
   const { data } = await unlock(passphrase, sealed);
-  const c = data as Partial<Connection> | null;
-  const ok = (v: unknown) => typeof v === 'string' && v.length > 0 && v.length < 300;
-  if (!c || !ok(c.owner) || !ok(c.repo) || !ok(c.branch) || !ok(c.token) || !/^[A-Za-z0-9-]+$/.test(c.owner!) || !/^[A-Za-z0-9._-]+$/.test(c.repo!)) throw new WrongPassphrase();
-  return { owner: c.owner!, repo: c.repo!, branch: c.branch!, token: c.token!, expires: typeof c.expires === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c.expires) ? c.expires : undefined };
+  const c = cleanConnection(data);
+  if (!c) throw new WrongPassphrase();
+  return c;
 }
 
 // ----- keeping this browser and the account in step -----
@@ -85,6 +95,8 @@ export interface LocalState {
 export class AccountSync {
   /** The sealed connection last seen at the service (kept so a preferences change never drops it). */
   vault: Sealed | undefined;
+  /** The connection stored readable, when saved in "sign-in only" mode. */
+  plain: Connection | undefined;
   /** Set when the last attempt failed, for the settings page. */
   lastError = '';
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -119,7 +131,7 @@ export class AccountSync {
 
   private build(updatedAt: string): AccountRecord {
     const l = this.local();
-    return { v: 1, profile: l.profile, prefs: l.prefs, shortcuts: overrides(l.shortcuts), vault: this.vault, updatedAt };
+    return { v: 1, profile: l.profile, prefs: l.prefs, shortcuts: overrides(l.shortcuts), vault: this.vault, plain: this.plain, updatedAt };
   }
 
   async push(): Promise<void> {
@@ -144,6 +156,7 @@ export class AccountSync {
     if (!remote) { await this.push(); return 'pushed'; }
     const rec = parseRecord(remote.data, remote.updatedAt);
     this.vault = rec.vault;
+    this.plain = rec.plain;
     const m = this.marks();
     const remoteNewer = !m.localAt || Date.parse(rec.updatedAt) > Date.parse(m.localAt);
     if (rec.updatedAt === m.syncedAt && !(m.localAt > m.syncedAt)) return 'same';
@@ -157,8 +170,22 @@ export class AccountSync {
   }
 
   /** Stores (or removes) the sealed connection in the account. */
-  async setVault(sealed: Sealed | undefined): Promise<void> {
+  async setVault(sealed: Sealed): Promise<void> {
     this.vault = sealed;
+    this.plain = undefined;
+    await this.push();
+  }
+
+  /** Stores the connection readable: sign-in alone opens it (less private than a passphrase). */
+  async setPlain(c: Connection): Promise<void> {
+    this.plain = c;
+    this.vault = undefined;
+    await this.push();
+  }
+
+  async clearStored(): Promise<void> {
+    this.vault = undefined;
+    this.plain = undefined;
     await this.push();
   }
 }

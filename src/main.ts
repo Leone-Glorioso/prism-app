@@ -19,6 +19,8 @@ import { daysLeft, expiryState } from './expiry';
 import { diffLines } from './diff';
 import { citeKeysIn, completionSource, labelsIn } from './complete';
 import { SETUP_FILES, setupStatus } from './setup';
+import { TEMPLATES, templateById } from './templates';
+import { guessEngine, MAX_ZIP_BYTES, nameFromFile, pickMainFile, readZip, timeAgo, uniqueName } from './projects';
 import { WrongPassphrase } from './vault';
 import {
   applyEol, cleanPath, decodeText, detectEol, dirname, encodeText, Eol, formatBytes, imageType, isTexLike, joinPath,
@@ -92,7 +94,7 @@ const relative = (path: string) => path.slice(projectRoot().length + 1);
 function setEnabled() {
   const connected = !!ws;
   const hasProject = connected && !!project;
-  for (const id of ['project', 'new-project']) ($(id) as HTMLButtonElement).disabled = !connected;
+  for (const id of ['project', 'new-project', 'home-btn']) ($(id) as HTMLButtonElement).disabled = !connected;
   for (const id of ['project-settings', 'new-file', 'upload-btn', 'zip', 'refresh']) ($(id) as HTMLButtonElement).disabled = !hasProject;
   const fileSelected = hasProject && !!selected && !selected.endsWith('/');
   ($('rename') as HTMLButtonElement).disabled = !hasProject || !selected;
@@ -185,25 +187,27 @@ async function connect(s: store.Settings) {
   const restored = await restoreDrafts();
   await loadManifest();
   const last = store.lastProject(s);
-  const pick = manifest.find((m) => m.Project === last) ?? manifest[0] ?? null;
-  await selectProject(pick?.Project ?? null);
+  lastOpenedName = manifest.some((m) => m.Project === last) ? last : null;
+  await selectProject(null);
+  showHome(); // the start screen: all projects
   setStatus(restored ? `Restored ${restored} unsaved file(s) from this browser.` : 'Ready.');
   void checkSetup();
 }
 
 async function loadManifest() {
   if (!ws) return;
-  manifest = [];
+  let next: ManifestEntry[] = []; // built aside: the old list stays valid while the file is being read
   if (ws.exists(MANIFEST)) {
     const text = decodeText(await ws.read(MANIFEST));
     try {
       const parsed: unknown = JSON.parse((text ?? '').replace(/^﻿/, ''));
       if (!Array.isArray(parsed)) throw new Error('not a list');
-      manifest = parsed.filter((m): m is ManifestEntry => !!m && typeof m.Project === 'string' && typeof m.MainFile === 'string');
+      next = parsed.filter((m): m is ManifestEntry => !!m && typeof m.Project === 'string' && typeof m.MainFile === 'string');
     } catch (e) {
       setStatus(`${MANIFEST} is not valid: ${errorText(e)}`, 'error');
     }
   }
+  manifest = next;
   manifest.sort((a, b) => a.Project.localeCompare(b.Project, undefined, { sensitivity: 'base' }));
   if (project) project = manifest.find((m) => m.Project === project!.Project) ?? null; // re-point to the parsed copy
   const sel = $<HTMLSelectElement>('project');
@@ -214,6 +218,264 @@ async function loadManifest() {
 function writeManifest() {
   ws!.put(MANIFEST, encodeText(JSON.stringify(manifest, null, 2) + '\n'));
   void loadManifest().then(() => { setEnabled(); });
+}
+
+// ---------- Start screen: all projects ----------
+
+let lastOpenedName: string | null = null;
+let homeSeq = 0;
+
+type EditedCache = Record<string, { t: number; checked: number }>;
+const editedKey = () => (settings ? `prism.edited:${settings.owner}/${settings.repo}` : '');
+function loadEdited(): EditedCache {
+  try { return JSON.parse(localStorage.getItem(editedKey()) ?? '{}') as EditedCache; } catch { return {}; }
+}
+function saveEdited(c: EditedCache) {
+  try { localStorage.setItem(editedKey(), JSON.stringify(c)); } catch { /* storage blocked: dates are only a convenience */ }
+}
+/** Notes that these projects were just saved (their "last edited" time is now). */
+function touchEdited(paths: string[]) {
+  const roots = new Set(paths.filter((p) => p.includes('/')).map((p) => p.split('/')[0]));
+  const c = loadEdited();
+  const now = Date.now();
+  for (const m of manifest) if (roots.has(rootOf(m))) c[m.Project] = { t: now, checked: now };
+  saveEdited(c);
+}
+
+const rootOf = (m: ManifestEntry) => m.MainFile.replace(/\\/g, '/').split('/')[0];
+const hasLocalChanges = (m: ManifestEntry) => !!ws && [...ws.changes.keys()].some((p) => p.startsWith(`${rootOf(m)}/`));
+const ENGINE_LABEL: Record<string, string> = { pdflatex: 'pdfLaTeX', xelatex: 'XeLaTeX', lualatex: 'LuaLaTeX' };
+
+function setMode(m: 'home' | 'editor') {
+  document.body.dataset.mode = m;
+}
+
+function showHome() {
+  if (!ws) return;
+  flushEdits();
+  setMode('home');
+  renderHome();
+  void refreshEdited();
+  setEnabled();
+}
+
+async function openProject(name: string) {
+  await selectProject(name);
+  setMode('editor');
+  showView('editor');
+  setEnabled();
+}
+
+function hueOf(name: string): number {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.codePointAt(0)!) % 360;
+  return h;
+}
+
+function renderHome() {
+  const grid = $('home-grid');
+  grid.replaceChildren();
+  if (!ws) return;
+  const q = $<HTMLInputElement>('home-search').value.trim().toLowerCase();
+  const cache = loadEdited();
+  const edited = (m: ManifestEntry) => (hasLocalChanges(m) ? Date.now() : cache[m.Project]?.t ?? 0);
+  const byName = (a: ManifestEntry, b: ManifestEntry) => a.Project.localeCompare(b.Project, undefined, { sensitivity: 'base' });
+  const items = manifest.filter((m) => !q || m.Project.toLowerCase().includes(q));
+  items.sort($<HTMLSelectElement>('home-sort').value === 'name' ? byName : (a, b) => edited(b) - edited(a) || byName(a, b));
+  $('home-note').textContent = manifest.length
+    ? `${items.length === manifest.length ? manifest.length : `${items.length} of ${manifest.length}`} project${manifest.length === 1 ? '' : 's'}`
+    : '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'home-empty';
+    const h = document.createElement('h2');
+    h.textContent = manifest.length ? 'No project matches your search' : 'No projects yet';
+    const p = document.createElement('p');
+    p.textContent = manifest.length ? 'Try another word.' : 'Create one from a template, or upload a ZIP file of an existing project.';
+    empty.append(h, p);
+    grid.append(empty);
+    return;
+  }
+  for (const m of items) {
+    const card = document.createElement('article');
+    card.className = 'pcard';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Open project ${m.Project}`);
+    const top = document.createElement('div');
+    top.className = 'pcard-top';
+    const mark = document.createElement('div');
+    mark.className = 'pcard-mark';
+    mark.style.background = `hsl(${hueOf(m.Project)} 55% 42%)`;
+    mark.textContent = ([...m.Project.trim()][0] ?? '?').toUpperCase();
+    const title = document.createElement('div');
+    title.className = 'pcard-title';
+    title.textContent = m.Project;
+    top.append(mark, title);
+    const meta = document.createElement('div');
+    meta.className = 'pcard-meta';
+    const eng = document.createElement('span');
+    eng.className = 'pcard-badge';
+    eng.textContent = ENGINE_LABEL[(m.Engine ?? 'pdflatex').toLowerCase()] ?? String(m.Engine);
+    meta.append(eng);
+    if (hasLocalChanges(m)) {
+      const b = document.createElement('span');
+      b.className = 'pcard-badge warn';
+      b.textContent = 'Unsaved changes';
+      meta.append(b);
+    } else if (m.Project === lastOpenedName) {
+      const b = document.createElement('span');
+      b.className = 'pcard-badge ok';
+      b.textContent = 'Last opened';
+      meta.append(b);
+    }
+    const when = document.createElement('span');
+    const t = cache[m.Project]?.t;
+    when.textContent = hasLocalChanges(m) ? '' : t ? `Edited ${timeAgo(t)}` : '';
+    meta.append(when);
+    const actions = document.createElement('div');
+    actions.className = 'pcard-actions';
+    const mk = (iconName: string, label: string, run: () => void) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'icon-btn sm';
+      b.title = label;
+      b.setAttribute('aria-label', `${label}: ${m.Project}`);
+      b.innerHTML = icon(iconName); // static SVG only
+      b.addEventListener('click', (e) => { e.stopPropagation(); run(); });
+      b.addEventListener('keydown', (e) => e.stopPropagation());
+      actions.append(b);
+    };
+    mk('pencil', 'Rename', () => openProjectDialog('rename', m.Project));
+    mk('copy', 'Duplicate', () => openProjectDialog('duplicate', m.Project));
+    mk('download', 'Download ZIP', () => void downloadProject(m));
+    mk('trash', 'Delete', () => deleteProject(m));
+    card.append(top, meta, actions);
+    card.addEventListener('click', () => void openProject(m.Project));
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openProject(m.Project); } });
+    grid.append(card);
+  }
+}
+
+/** Fills in "edited … ago" for every project (one small request each, cached for 15 minutes). */
+async function refreshEdited() {
+  if (!gh || !settings || !ws) return;
+  const seq = ++homeSeq;
+  const cache = loadEdited();
+  const now = Date.now();
+  const todo = manifest.map((m) => m.Project).filter((n) => !cache[n] || now - cache[n].checked > 15 * 60_000);
+  if (!todo.length) return;
+  let next = 0;
+  let stop = false;
+  const worker = async () => {
+    while (next < todo.length && !stop && seq === homeSeq) {
+      const name = todo[next++];
+      const m = manifest.find((x) => x.Project === name);
+      if (!m) continue;
+      try {
+        const commits = await gh!.listCommits(rootOf(m), settings!.branch, 1);
+        const d = commits[0]?.commit.author?.date;
+        cache[name] = { t: d ? Date.parse(d) : 0, checked: Date.now() };
+      } catch { stop = true; } // rate limit or network: show what we have
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, todo.length) }, worker));
+  saveEdited(cache);
+  if (seq === homeSeq && document.body.dataset.mode === 'home') renderHome();
+}
+
+// ---------- Project operations (all stay local until Save) ----------
+
+function validProjectName(name: string): string | null {
+  if (!name) return 'Enter a name.';
+  const r = cleanPath(name);
+  if ('error' in r) return r.error;
+  if (r.path.includes('/')) return 'The name cannot contain "/".';
+  if (name.startsWith('.')) return 'The name cannot start with a dot.';
+  if (r.path === MANIFEST || manifest.some((m) => m.Project.toLowerCase() === name.toLowerCase())
+    || ws!.paths().some((p) => p.toLowerCase().startsWith(`${name.toLowerCase()}/`))) return 'A project or folder with that name already exists.';
+  return null;
+}
+
+function duplicateProject(src: ManifestEntry, newName: string) {
+  const from = `${rootOf(src)}/`;
+  for (const p of ws!.paths().filter((x) => x.startsWith(from))) ws!.copy(p, `${newName}/${p.slice(from.length)}`);
+  const copy: ManifestEntry = { ...src, Project: newName, MainFile: `${newName}/${src.MainFile.replace(/\\/g, '/').slice(from.length)}`, Status: 'New', Detail: `Copy of ${src.Project}.` };
+  manifest.push(copy);
+  writeManifest();
+  persistDrafts();
+}
+
+function renameProject(src: ManifestEntry, newName: string) {
+  const from = `${rootOf(src)}/`;
+  if (project && rootOf(project) === rootOf(src)) void selectProject(null); // the open editor would point at moved files
+  const files = ws!.paths().filter((x) => x.startsWith(from));
+  for (const p of files) { ws!.rename(p, `${newName}/${p.slice(from.length)}`); open.delete(p); }
+  src.MainFile = `${newName}/${src.MainFile.replace(/\\/g, '/').slice(from.length)}`;
+  src.Project = newName;
+  const cache = loadEdited();
+  delete cache[newName];
+  saveEdited(cache);
+  writeManifest();
+  persistDrafts();
+}
+
+function deleteProject(m: ManifestEntry) {
+  const from = `${rootOf(m)}/`;
+  const files = ws!.paths().filter((x) => x.startsWith(from));
+  if (!confirm(`Delete the project "${m.Project}" with its ${files.length} file(s)?\n\nThe deletion is stored when you Save. Git history keeps every older version, so it can be recovered.`)) return;
+  if (project && rootOf(project) === rootOf(m)) void selectProject(null);
+  for (const p of files) { ws!.remove(p); open.delete(p); }
+  manifest = manifest.filter((x) => x !== m);
+  writeManifest();
+  persistDrafts();
+  setStatus(`Deleted "${m.Project}". Save to apply.`);
+  void loadManifest().then(() => { renderHome(); setEnabled(); });
+}
+
+async function downloadProject(m: ManifestEntry) {
+  flushEdits();
+  setStatus('Preparing ZIP…', 'busy');
+  try {
+    const root = `${rootOf(m)}/`;
+    const entries: Record<string, Uint8Array> = {};
+    for (const p of ws!.paths().filter((x) => x.startsWith(root))) entries[p] = await ws!.read(p);
+    download(`${m.Project}.zip`, zipSync(entries, { level: 6 }), 'application/zip');
+    setStatus('ZIP ready.');
+  } catch (e) {
+    setStatus(`ZIP failed: ${errorText(e)}`, 'error');
+  }
+}
+
+async function uploadProjectZip(file: File) {
+  if (!ws) return;
+  if (file.size > MAX_ZIP_BYTES) { alert(`That ZIP is larger than ${formatBytes(MAX_ZIP_BYTES)}.`); return; }
+  setStatus('Reading ZIP…', 'busy');
+  let zip;
+  try {
+    zip = readZip(new Uint8Array(await file.arrayBuffer()));
+  } catch (e) {
+    setStatus(errorText(e), 'error');
+    alert(errorText(e));
+    return;
+  }
+  const texts = new Map<string, string>();
+  for (const [p, bytes] of zip.files) if (/\.tex$/i.test(p)) { const t = decodeText(bytes); if (t !== null) texts.set(p, t); }
+  const main = pickMainFile([...zip.files.keys()], (p) => texts.get(p));
+  if (!main) { setStatus('That ZIP contains no .tex file.', 'error'); alert('That ZIP contains no .tex file, so it cannot be a LaTeX project.'); return; }
+  const folders = ws.paths().map((p) => p.split('/')[0]);
+  const name = uniqueName(nameFromFile(file.name), [...manifest.map((m) => m.Project), ...folders]);
+  const bad = validProjectName(name);
+  if (bad) { setStatus(bad, 'error'); alert(bad); return; }
+  for (const [rel, bytes] of zip.files) ws.put(`${name}/${rel}`, bytes);
+  manifest.push({ Project: name, MainFile: `${name}/${main}`, Engine: guessEngine(texts.get(main) ?? ''), Bibliography: 'none', MissingBibliography: [], Status: 'New', Detail: `Uploaded from ${file.name}.` });
+  writeManifest();
+  persistDrafts();
+  const skipped = zip.skipped.length ? ` ${zip.skipped.length} item(s) skipped.` : '';
+  setStatus(`Imported ${zip.files.size} files as "${name}" (main file ${main}, ${ENGINE_LABEL[guessEngine(texts.get(main) ?? '')]}).${skipped} Save to keep it.`);
+  await loadManifest();
+  renderHome();
+  setEnabled();
 }
 
 async function selectProject(name: string | null) {
@@ -683,6 +945,7 @@ async function doSave(): Promise<boolean> {
     setEnabled();
     return false;
   }
+  touchEdited(paths);
   // Saved text is now the committed text.
   for (const f of open.values()) f.original = applyEol(f.state.doc.toString(), f.eol);
   persistDrafts();
@@ -726,6 +989,7 @@ async function afterRemoteChange() {
   }
   renderTree();
   setEnabled();
+  if (document.body.dataset.mode === 'home') renderHome();
   void checkSetup();
 }
 
@@ -1309,73 +1573,120 @@ function prefsChanged() {
   if (before.theme !== prefs.theme || before.spellcheck !== prefs.spellcheck || before.spellLang !== prefs.spellLang) rebuildEditorStates();
 }
 
-let projectDialogMode: 'new' | 'edit' = 'new';
+type ProjectDialogMode = 'new' | 'edit' | 'rename' | 'duplicate';
+let projectDialogMode: ProjectDialogMode = 'new';
+let projectDialogTarget: ManifestEntry | null = null;
 
-function openProjectDialog(mode: 'new' | 'edit') {
+function applyTemplateToDialog() {
+  const t = templateById($<HTMLSelectElement>('p-template').value);
+  $('p-template-desc').textContent = t.description;
+  $<HTMLSelectElement>('p-engine').value = t.engine;
+  $<HTMLInputElement>('p-rc').checked = !!t.latexmkrc;
+  $<HTMLInputElement>('p-shell').checked = !!t.shellEscape;
+}
+
+function openProjectDialog(mode: ProjectDialogMode, targetName?: string) {
   projectDialogMode = mode;
-  $('p-title').textContent = mode === 'new' ? 'New project' : `Project settings: ${project?.Project}`;
-  $('p-name-label').hidden = mode !== 'new';
+  projectDialogTarget = mode === 'edit' ? project : manifest.find((m) => m.Project === targetName) ?? null;
+  const target = projectDialogTarget;
+  const titles: Record<ProjectDialogMode, string> = {
+    new: 'New project', edit: `Project settings: ${project?.Project ?? ''}`,
+    rename: `Rename "${target?.Project ?? ''}"`, duplicate: `Duplicate "${target?.Project ?? ''}"`,
+  };
+  $('p-title').textContent = titles[mode];
+  const nameMode = mode !== 'edit';
+  const fullMode = mode === 'new' || mode === 'edit';
+  $('p-name-label').hidden = !nameMode;
+  $('p-template-label').hidden = mode !== 'new';
+  $('p-template-desc').hidden = mode !== 'new';
   $('p-main-label').hidden = mode !== 'edit';
-  $<HTMLInputElement>('p-name').value = '';
+  $('p-engine').closest('label')!.hidden = !fullMode;
+  $('p-advanced').hidden = !fullMode;
+  ($('p-advanced').previousElementSibling as HTMLElement).hidden = !fullMode;
+  const nameInput = $<HTMLInputElement>('p-name');
+  nameInput.value = mode === 'rename' ? target?.Project ?? '' : mode === 'duplicate' ? uniqueName(`${target?.Project ?? 'Project'} copy`, manifest.map((m) => m.Project)) : '';
   $('p-error').textContent = '';
-  const engine = $<HTMLSelectElement>('p-engine');
-  engine.value = mode === 'edit' ? (project?.Engine ?? 'pdflatex').toLowerCase() : 'pdflatex';
-  if (mode === 'edit' && project) {
+  const tplSelect = $<HTMLSelectElement>('p-template');
+  if (!tplSelect.options.length) tplSelect.replaceChildren(...TEMPLATES.map((t) => new Option(t.name, t.id)));
+  if (mode === 'new') {
+    tplSelect.value = TEMPLATES[0].id;
+    applyTemplateToDialog();
+  } else if (mode === 'edit' && project) {
+    $<HTMLSelectElement>('p-engine').value = (project.Engine ?? 'pdflatex').toLowerCase();
+    $<HTMLInputElement>('p-rc').checked = !!project.UseLatexmkrc;
+    $<HTMLInputElement>('p-shell').checked = !!project.ShellEscape;
     const root = projectRoot() + '/';
     const texFiles = ws!.paths().filter((p) => p.startsWith(root) && p.toLowerCase().endsWith('.tex'));
     $<HTMLSelectElement>('p-main').replaceChildren(...texFiles.map((p) => new Option(relative(p), p, false, p === mainPath())));
   }
-  $<HTMLDialogElement>('project-dialog').showModal();
+  const dlg = $<HTMLDialogElement>('project-dialog');
+  dlg.showModal();
+  if (nameMode) { nameInput.focus(); nameInput.select(); }
 }
-
-const TEMPLATE = `\\documentclass[11pt]{article}
-\\usepackage[margin=2.5cm]{geometry}
-
-\\title{Title}
-\\author{Author}
-\\date{\\today}
-
-\\begin{document}
-\\maketitle
-
-\\section{Introduction}
-Write here.
-
-\\end{document}
-`;
 
 function submitProjectDialog() {
   const err = $('p-error');
   const engine = $<HTMLSelectElement>('p-engine').value;
-  if (projectDialogMode === 'new') {
-    const name = $<HTMLInputElement>('p-name').value.trim();
-    const r = cleanPath(name);
-    if ('error' in r) { err.textContent = r.error; return; }
-    if (r.path.includes('/')) { err.textContent = 'The name cannot contain "/".'; return; }
-    if (r.path === MANIFEST || manifest.some((m) => m.Project.toLowerCase() === name.toLowerCase())
-      || ws!.paths().some((p) => p.toLowerCase().startsWith(name.toLowerCase() + '/'))) {
-      err.textContent = 'A project or folder with that name already exists.';
-      return;
-    }
-    const main = `${name}/main.tex`;
-    ws!.put(main, encodeText(TEMPLATE));
-    manifest.push({ Project: name, MainFile: main, Engine: engine, Bibliography: 'none', MissingBibliography: [], Status: 'New', Detail: 'Created in Prism web.' });
-    writeManifest();
-    persistDrafts();
-    $<HTMLDialogElement>('project-dialog').close();
-    void loadManifest().then(() => selectProject(name)).then(() => setStatus('Project created. Save or Compile to store it.'));
-  } else if (project) {
+  const shell = $<HTMLInputElement>('p-shell').checked;
+  const rc = $<HTMLInputElement>('p-rc').checked;
+  const close = () => $<HTMLDialogElement>('project-dialog').close();
+  if (!ws) return;
+
+  if (projectDialogMode === 'edit') {
+    if (!project) return;
     project.MainFile = $<HTMLSelectElement>('p-main').value || project.MainFile;
     project.Engine = engine;
+    if (shell) project.ShellEscape = true; else delete project.ShellEscape;
+    if (rc) project.UseLatexmkrc = true; else delete project.UseLatexmkrc;
     writeManifest();
-    $<HTMLDialogElement>('project-dialog').close();
+    close();
     renderTree();
     setStatus('Project settings changed. Save or Compile to store them.');
+    return;
+  }
+
+  const name = $<HTMLInputElement>('p-name').value.trim();
+  const target = projectDialogTarget;
+  // Renaming to the same name is a no-op; any other name must be free.
+  if (projectDialogMode === 'rename' && target && name === target.Project) { close(); return; }
+  const bad = validProjectName(name);
+  if (bad) { err.textContent = bad; return; }
+
+  if (projectDialogMode === 'new') {
+    const tpl = templateById($<HTMLSelectElement>('p-template').value);
+    for (const [rel, text] of Object.entries(tpl.files)) ws.put(`${name}/${rel}`, encodeText(text));
+    manifest.push({
+      Project: name, MainFile: `${name}/main.tex`, Engine: engine, Bibliography: tpl.bibliography, MissingBibliography: [], Status: 'New', Detail: `Created from the "${tpl.name}" template.`,
+      ...(shell ? { ShellEscape: true } : {}), ...(rc ? { UseLatexmkrc: true } : {}),
+    });
+    writeManifest();
+    persistDrafts();
+    close();
+    void loadManifest().then(() => openProject(name)).then(() => setStatus('Project created. Save or Compile to store it.'));
+  } else if (projectDialogMode === 'duplicate' && target) {
+    duplicateProject(target, name);
+    close();
+    void loadManifest().then(() => { renderHome(); setEnabled(); setStatus(`Duplicated as "${name}". Save to keep it.`); });
+  } else if (projectDialogMode === 'rename' && target) {
+    renameProject(target, name);
+    close();
+    void loadManifest().then(() => { renderHome(); setEnabled(); setStatus(`Renamed to "${name}". Save to apply. Earlier online builds of the old name are no longer shown.`); });
   }
 }
 
 // ---------- Wiring ----------
 
+$('brand').addEventListener('click', showHome);
+$('home-btn').addEventListener('click', showHome);
+$('home-new').addEventListener('click', () => openProjectDialog('new'));
+$('home-upload').addEventListener('click', () => $<HTMLInputElement>('zip-upload').click());
+$<HTMLInputElement>('zip-upload').addEventListener('change', (e) => {
+  const input = e.target as HTMLInputElement;
+  if (input.files?.[0]) void uploadProjectZip(input.files[0]).finally(() => { input.value = ''; });
+});
+$('home-search').addEventListener('input', renderHome);
+$('home-sort').addEventListener('change', renderHome);
+$('p-template').addEventListener('change', applyTemplateToDialog);
 $('settings').addEventListener('click', openPrefs);
 $('connection').addEventListener('click', () => openSettings());
 $('welcome-connect').addEventListener('click', () => openSettings());

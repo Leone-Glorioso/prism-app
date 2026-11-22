@@ -50,7 +50,7 @@ Your TeX code is treated as untrusted. The compile job runs it in a container wi
 (`--network none`), **no Linux capabilities** (`--cap-drop ALL`), `no-new-privileges`, **non-root user**, memory and
 process limits, TeX Live's default restricted shell escape, and **no job token in the container** (the checkout does not
 persist credentials). The result is published to a `builds/*` branch by a separate step. Workflows can only use GitHub's
-own actions, pinned to commit hashes (the repository requires SHA pinning). A project name coming from the app is passed
+own actions, pinned to commit hashes (the repository requires SHA pinning). Per project, the manifest can switch on shell escape and the project's own `latexmkrc`; both run only inside this same container (no network, no privileges, no secrets), so they cannot reach anything outside it. A project name coming from the app is passed
 as an environment variable, never pasted into a shell command, and the main file must live inside that project's folder.
 
 ## Conflicts and "locking"
@@ -71,7 +71,7 @@ Compiles of one project cancel each other (newest wins).
 
 ## Checked on 22 November 2026
 
-* Unit tests (48): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
+* Unit tests (58): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
   logic; path validation; SyncTeX; log parsing.
 * Real GitHub run of the hardened compile job on the thesis, an XeLaTeX+Biber project and a pdfLaTeX project: all `ok`;
   thesis identical to the earlier build (170 pages, 66 warnings).

@@ -13,8 +13,9 @@
 </head>
 <body data-view="editor">
   <header class="topbar">
-    <div class="brand"><span class="brand-mark" data-icon="logo"></span><span>Prism</span></div>
+    <button id="brand" class="brand" type="button" title="All projects" aria-label="Prism: all projects"><span class="brand-mark" data-icon="logo"></span><span>Prism</span></button>
     <div class="project-picker">
+      <button id="home-btn" class="btn" data-icon="folder" title="All projects" disabled><span class="label">Projects</span></button>
       <label class="sr-only" for="project">Project</label>
       <select id="project" disabled></select>
       <button id="project-settings" class="icon-btn" data-icon="sliders" title="Project settings" aria-label="Project settings" disabled></button>
@@ -40,6 +41,24 @@
     <button data-view="editor" data-icon="file">Editor</button>
     <button data-view="output" data-icon="pdf">PDF</button>
   </nav>
+
+  <section id="home" class="home" aria-label="Projects">
+    <div class="home-inner">
+      <div class="home-head">
+        <h1>Projects</h1>
+        <div class="home-tools">
+          <input id="home-search" type="search" placeholder="Search projects…" autocomplete="off" spellcheck="false" aria-label="Search projects">
+          <label class="sr-only" for="home-sort">Sort by</label>
+          <select id="home-sort"><option value="recent">Last edited</option><option value="name">Name</option></select>
+          <button id="home-upload" class="btn" data-icon="upload"><span class="label">Upload ZIP</span></button>
+          <button id="home-new" class="btn primary" data-icon="plus"><span class="label">New project</span></button>
+        </div>
+      </div>
+      <p id="home-note" class="hint"></p>
+      <div id="home-grid" class="home-grid"></div>
+    </div>
+    <input type="file" id="zip-upload" accept=".zip,application/zip" hidden>
+  </section>
 
   <main class="layout" id="layout">
     <aside class="panel files" aria-label="Project sidebar">
@@ -215,6 +234,10 @@
   <dialog id="project-dialog" aria-labelledby="p-title">
     <h2 id="p-title">Project</h2>
     <label id="p-name-label">Project name (also its folder name)<input id="p-name" autocomplete="off"></label>
+    <label id="p-template-label">Start from
+      <select id="p-template"></select>
+    </label>
+    <p id="p-template-desc" class="hint"></p>
     <label id="p-main-label">Main file<select id="p-main"></select></label>
     <label>Engine
       <select id="p-engine">
@@ -223,7 +246,11 @@
         <option value="lualatex">LuaLaTeX</option>
       </select>
     </label>
-    <p class="hint">BibTeX or Biber is chosen automatically by latexmk.</p>
+    <p class="hint">BibTeX or Biber is chosen automatically by latexmk. Makeindex runs automatically too.</p>
+    <div id="p-advanced">
+      <label class="check"><input id="p-rc" type="checkbox"><span>Use this project's <code>.latexmkrc</code> (needed for glossaries and other custom build steps)</span></label>
+      <label class="check"><input id="p-shell" type="checkbox"><span>Allow shell escape (packages that run programs, for example pythontex). Runs only in the isolated compile container.</span></label>
+    </div>
     <p id="p-error" class="error" role="alert"></p>
     <div class="dialog-buttons">
       <span class="sep"></span>

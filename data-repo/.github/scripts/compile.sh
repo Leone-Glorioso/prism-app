@@ -30,7 +30,8 @@ entry="$(PROJECT="$project" perl -MJSON::PP -e '
   for my $p (@$list) {
     next unless $p->{Project} eq $ENV{PROJECT};
     (my $m = $p->{MainFile} // "") =~ s{\\}{/}g;
-    print "$m\t", lc($p->{Engine} // "pdflatex"); exit 0;
+    # main file, engine, shell escape (0/1), use the project latexmkrc (0/1)
+    print join("\t", $m, lc($p->{Engine} // "pdflatex"), ($p->{ShellEscape} ? 1 : 0), ($p->{UseLatexmkrc} ? 1 : 0)); exit 0;
   }
   exit 3;' "$manifest")"
 case $? in
@@ -38,8 +39,7 @@ case $? in
   2) echo "Cannot read or parse $manifest" > "$out/output.log"; write_result error 2 "" "" "Cannot read or parse $manifest" 0; exit 0 ;;
   *) echo "Project not in $manifest: $project" > "$out/output.log"; write_result error 3 "" "" "Project not in manifest" 0; exit 0 ;;
 esac
-main="${entry%%$'\t'*}"
-engine="${entry#*$'\t'}"
+IFS=$'\t' read -r main engine shellflag rcflag <<< "$entry"
 
 # Trust boundary: the project name comes from a workflow input.
 if [[ -z "$main" || "$main" == /* || "$main" == *".."* || "$main" != "$project/"* || ! -f "$main" ]]; then
@@ -56,9 +56,14 @@ base="$(basename "$main" .tex)"
 start=$(date +%s)
 cd "$dir"
 # -f: keep going after errors so a PDF is still produced when possible (as Prism did).
-# -norc: ignore latexmkrc files from the repo; shell escape stays at the TeX Live default (restricted).
-timeout "$timeout_s" latexmk -norc "$flag" -f -interaction=nonstopmode -file-line-error -synctex=1 "$base.tex" \
-  > "$out/latexmk.txt" 2>&1
+# Default: -norc (ignore latexmkrc files from the repo) and TeX Live's restricted shell escape.
+# Per project, the manifest can switch on full shell escape (minted, pythontex, svg...) and the project's own
+# latexmkrc (glossaries, nomenclature, custom steps). Both run only inside the throw-away container
+# (no network, no privileges, no secrets), so the project's code cannot reach anything outside it.
+args=(-f -interaction=nonstopmode -file-line-error -synctex=1 "$flag")
+[[ "$rcflag" == 1 ]] || args=(-norc "${args[@]}")
+[[ "$shellflag" == 1 ]] && args+=(-shell-escape)
+timeout "$timeout_s" latexmk "${args[@]}" "$base.tex" > "$out/latexmk.txt" 2>&1
 code=$?
 duration=$(( $(date +%s) - start ))
 

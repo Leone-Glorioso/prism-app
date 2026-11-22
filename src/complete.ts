@@ -1,5 +1,6 @@
 // LaTeX auto-completion: commands, environments, \ref labels, \cite keys and file names.
 
+import { snippetCompletion } from '@codemirror/autocomplete';
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 
 export interface CompletionData {
@@ -34,6 +35,22 @@ const COMMANDS = [
   'small', 'large', 'Large', 'LARGE', 'huge', 'Huge', 'normalsize',
 ].map((c) => `\\${c}`);
 
+/** Ready-made blocks: type a backslash and the name (for example \figure), pick it, then Tab through the blanks. */
+const snip = (label: string, detail: string, template: string) => snippetCompletion(template, { label, detail, type: 'snippet', boost: -1 });
+export const SNIPPETS: Completion[] = [
+  snip('\\figure', 'figure with image and caption', '\\begin{figure}[htbp]\n\t\\centering\n\t\\includegraphics[width=0.8\\linewidth]{${file}}\n\t\\caption{${caption}}\n\t\\label{fig:${label}}\n\\end{figure}'),
+  snip('\\table', 'table with caption', '\\begin{table}[htbp]\n\t\\centering\n\t\\caption{${caption}}\n\t\\label{tab:${label}}\n\t\\begin{tabular}{lcc}\n\t\t\\toprule\n\t\t${A} & ${B} & ${C} \\\\\n\t\t\\midrule\n\t\t${} & ${} & ${} \\\\\n\t\t\\bottomrule\n\t\\end{tabular}\n\\end{table}'),
+  snip('\\equation', 'numbered equation', '\\begin{equation}\n\t${}\n\t\\label{eq:${label}}\n\\end{equation}'),
+  snip('\\align', 'aligned equations', '\\begin{align}\n\t${a} &= ${b} \\\\\n\t&= ${c}\n\\end{align}'),
+  snip('\\itemize', 'bullet list', '\\begin{itemize}\n\t\\item ${}\n\t\\item ${}\n\\end{itemize}'),
+  snip('\\enumerate', 'numbered list', '\\begin{enumerate}\n\t\\item ${}\n\t\\item ${}\n\\end{enumerate}'),
+  snip('\\frame', 'Beamer slide', '\\begin{frame}{${title}}\n\t${}\n\\end{frame}'),
+  snip('\\tikz', 'TikZ drawing', '\\begin{tikzpicture}\n\t\\draw[->] (0,0) -- (${2},${1});\n\\end{tikzpicture}'),
+  snip('\\plot', 'PGFPlots function plot', '\\begin{tikzpicture}\n\t\\begin{axis}[xlabel=$x$, ylabel=$y$]\n\t\t\\addplot[domain=${-2}:${2}, samples=50] {${x^2}};\n\t\\end{axis}\n\\end{tikzpicture}'),
+  snip('\\code', 'highlighted code (minted)', '\\begin{minted}[linenos]{${python}}\n${}\n\\end{minted}'),
+  snip('\\theorem', 'theorem and proof', '\\begin{theorem}\\label{thm:${label}}\n\t${}\n\\end{theorem}\n\\begin{proof}\n\t${}\n\\end{proof}'),
+];
+
 const opt = (label: string, type: string): Completion => ({ label, type });
 const uniq = (xs: string[]) => [...new Set(xs)];
 
@@ -52,7 +69,7 @@ export function completionSource(data: () => CompletionData) {
     if ((m = /\\(?:cite[a-zA-Z]*|parencite|textcite|autocite|footcite|nocite)\*?(?:\[[^\]]*\]){0,2}\{([^}]*)$/.exec(before))) return inBraces(data().cites(), m[1].split(',').pop()!.trimStart(), 'constant');
     if ((m = /\\(?:input|include|includegraphics)(?:\[[^\]]*\])?\{([^}]*)$/.exec(before))) return inBraces(data().files(), m[1], 'text');
     if ((m = /\\[a-zA-Z]*$/.exec(before)) && (m[0].length > 1 || ctx.explicit)) {
-      return { from: ctx.pos - m[0].length, options: COMMANDS.map((c) => opt(c, 'function')), validFor: /^\\[a-zA-Z]*$/ };
+      return { from: ctx.pos - m[0].length, options: [...COMMANDS.map((c) => opt(c, 'function')), ...SNIPPETS], validFor: /^\\[a-zA-Z]*$/ };
     }
     return null;
   };

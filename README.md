@@ -12,9 +12,24 @@ Security and privacy: see [SECURITY.md](SECURITY.md).
 
 ## What it does
 
-**Editing** — project list; file tree; CodeMirror editor with LaTeX highlighting, search (Ctrl+F), word count, optional
-spell-check; auto-completion for commands, environments, `\ref{…}` labels, `\cite{…}` keys and file names; image preview
-(click to toggle actual size); upload, new file, rename/move, delete, download, project ZIP.
+**Start screen** — all your projects as cards (name, engine, "edited … ago", unsaved-changes badge) with search and sorting.
+Click a card to open it; the brand or the *Projects* button brings you back. Per project: **rename**, **duplicate**,
+**download as ZIP**, **delete** (all stay local until you Save; Git history keeps old versions). **New project** starts from a
+template (Article, Article with bibliography, Report/thesis, Beamer slides, Letter, Greek article, TikZ/PGFPlots figures,
+code listings, Blank — each compiled on GitHub before release). **Upload ZIP** imports an existing project: a wrapper
+folder is removed, junk skipped, the main file and the engine (pdfLaTeX / XeLaTeX / LuaLaTeX) are detected.
+
+**Editing** — file tree; CodeMirror editor with LaTeX highlighting, search (Ctrl+F), word count, optional
+spell-check; auto-completion for commands, environments, `\ref{…}` labels, `\cite{…}` keys and file names; **ready-made
+blocks** (type `\figure`, `\table`, `\equation`, `\align`, `\itemize`, `\enumerate`, `\frame`, `\tikz`, `\plot`, `\code`,
+`\theorem` and press Enter, then Tab through the blanks); image preview (click to toggle actual size); upload, new file,
+rename/move, delete, download.
+
+**What LaTeX can do here** — the compile container is a complete TeX Live: pdfLaTeX, XeLaTeX, LuaLaTeX, BibTeX and Biber
+(BibLaTeX), makeindex, TikZ/PGFPlots, Beamer, polyglossia/Greek, `minted` code highlighting, any package TeX Live ships. In *Project
+settings*: **use the project's `.latexmkrc`** (needed for glossaries/acronyms and custom build steps) and **allow shell
+escape** (packages that run programs, for example pythontex). Both only run inside the isolated container.
+Not available: programs that are not in TeX Live (Inkscape for the `svg` package, Python libraries, Typst, Pandoc).
 
 **Navigating** — *Outline* of chapters and sections across `\input`/`\include` files; *Search* in the whole project
 (Ctrl+Shift+F, plain or regular expression) with **Replace all** (stays local until you Save); *File history* with a coloured comparison and one-click restore.
@@ -43,7 +58,7 @@ repository. (A shared repository would need a GitHub organisation.)
 3. Open the app → *Connect* → enter owner, repository, branch and token. Pick "Encrypted with a passphrase".
 4. The app shows a banner "not set up for compiling yet" → **Set up**. It commits the compile workflow and an empty
    project list (the app carries these files itself). Afterwards remove the *Workflows* permission from the token.
-5. Create a project with **+**, or upload files.
+5. Create a project with **New project** (pick a template), or **Upload ZIP**. Name the token anything you like, for example `Prism app`.
 
 To import existing projects use `New-PrismDataRepo.ps1` (see below) or upload files in the app.
 

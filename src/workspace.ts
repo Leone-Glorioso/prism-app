@@ -121,6 +121,18 @@ export class Workspace {
     this.remove(from);
   }
 
+  /** Copies a file to a new path without uploading it again when it is unchanged. The source is kept. */
+  copy(from: string, to: string) {
+    if (this.exists(to)) throw new Error(`Already exists: ${to}`);
+    const c = this.changes.get(from);
+    const committed = this.files.get(from);
+    const base = this.baseOf(to);
+    if (c?.kind === 'put') this.changes.set(to, { kind: 'put', bytes: c.bytes, mode: c.mode, base });
+    else if (c?.kind === 'copy') this.changes.set(to, { ...c, base });
+    else if (committed && !c) this.changes.set(to, { kind: 'copy', sha: committed.sha, mode: committed.mode, base });
+    else throw new Error(`No such file: ${from}`);
+  }
+
   get dirty(): boolean {
     return this.changes.size > 0;
   }

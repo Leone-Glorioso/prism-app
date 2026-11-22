@@ -12,6 +12,8 @@ export interface Settings {
   branch: string;
   token: string;
   mode: Mode;
+  /** Token expiry date entered by the user (YYYY-MM-DD), for the reminder. Not secret. */
+  expires?: string;
 }
 
 export interface Stored {
@@ -21,6 +23,7 @@ export interface Stored {
   mode: Mode;
   token?: string;
   sealed?: Sealed;
+  expires?: string;
 }
 
 const SETTINGS_KEY = 'prism.settings';
@@ -54,7 +57,7 @@ function parseStored(raw: string | null): Stored | null {
     const s = JSON.parse(raw) as Stored;
     if (!s || typeof s.owner !== 'string' || typeof s.repo !== 'string' || !s.owner || !s.repo) return null;
     const mode: Mode = s.mode === 'encrypted' || s.mode === 'session' ? s.mode : 'device';
-    return { owner: s.owner, repo: s.repo, branch: s.branch || 'main', mode, token: s.token, sealed: isSealed(s.sealed) ? s.sealed : undefined };
+    return { owner: s.owner, repo: s.repo, branch: s.branch || 'main', mode, token: s.token, sealed: isSealed(s.sealed) ? s.sealed : undefined, expires: /^d{4}-d{2}-d{2}$/.test(s.expires ?? '') ? s.expires : undefined };
   } catch {
     return null;
   }
@@ -67,7 +70,7 @@ export function loadSettings(): Loaded {
   if (!s) return null;
   if (s.sealed) return { locked: s };
   if (!s.token) return null;
-  return { settings: { owner: s.owner, repo: s.repo, branch: s.branch, token: s.token, mode: s.mode === 'encrypted' ? 'device' : s.mode } };
+  return { settings: { owner: s.owner, repo: s.repo, branch: s.branch, token: s.token, mode: s.mode === 'encrypted' ? 'device' : s.mode, expires: s.expires } };
 }
 
 export async function unlockSettings(stored: Stored, passphrase: string): Promise<Settings> {
@@ -76,7 +79,7 @@ export async function unlockSettings(stored: Stored, passphrase: string): Promis
   const token = (data as { token?: string } | null)?.token;
   if (!token) throw new Error('Stored data is damaged.');
   vault = { key, salt };
-  return { owner: stored.owner, repo: stored.repo, branch: stored.branch, token, mode: 'encrypted' };
+  return { owner: stored.owner, repo: stored.repo, branch: stored.branch, token, mode: 'encrypted', expires: stored.expires };
 }
 
 /** Saves settings. For 'encrypted' a passphrase is needed unless the vault is already unlocked. Returns false if storage failed. */
@@ -91,10 +94,10 @@ export async function saveSettings(s: Settings, passphrase?: string): Promise<bo
     }
     if (!vault) throw new Error('A passphrase is required.');
     const sealed = await seal(vault.key, vault.salt, { token: s.token });
-    return write(area('local'), SETTINGS_KEY, JSON.stringify({ owner: s.owner, repo: s.repo, branch: s.branch, mode: s.mode, sealed }));
+    return write(area('local'), SETTINGS_KEY, JSON.stringify({ owner: s.owner, repo: s.repo, branch: s.branch, mode: s.mode, sealed, expires: s.expires }));
   }
   vault = null;
-  return write(areaFor(s.mode), SETTINGS_KEY, JSON.stringify({ owner: s.owner, repo: s.repo, branch: s.branch, mode: s.mode, token: s.token }));
+  return write(areaFor(s.mode), SETTINGS_KEY, JSON.stringify({ owner: s.owner, repo: s.repo, branch: s.branch, mode: s.mode, token: s.token, expires: s.expires }));
 }
 
 export function lastConnection(): { owner: string; repo: string; branch: string } | null {

@@ -41,3 +41,54 @@ export function searchTexts(texts: Map<string, string>, query: string, opts: { r
   }
   return { hits, truncated: false };
 }
+
+export interface ReplaceResult {
+  /** New text of every file that changes, with the number of replacements. */
+  changed: Map<string, { text: string; count: number }>;
+  total: number;
+  error?: string;
+}
+
+/**
+ * Replaces matches line by line (same semantics as the search, so counts agree). Line endings are kept exactly.
+ * In plain mode the replacement is literal; in regex mode "$1" style group references work.
+ */
+export function replaceInTexts(texts: Map<string, string>, query: string, replacement: string, opts: { regex: boolean; caseSensitive: boolean }): ReplaceResult {
+  const changed = new Map<string, { text: string; count: number }>();
+  if (!query) return { changed, total: 0 };
+  let re: RegExp;
+  try {
+    re = new RegExp(opts.regex ? query : escapeRe(query), opts.caseSensitive ? 'g' : 'gi');
+  } catch (e) {
+    return { changed, total: 0, error: (e as Error).message };
+  }
+  let total = 0;
+  for (const [file, text] of texts) {
+    let count = 0;
+    // The split keeps the line separators (\n or \r\n) as odd entries; they are copied untouched.
+    const parts = text.split(/(\r?\n)/).map((part, i) => {
+      if (i % 2 === 1) return part;
+      return part.replace(re, (...args: unknown[]) => {
+        const match = args[0] as string;
+        if (match === '') return match; // never insert text at empty matches
+        count++;
+        if (!opts.regex) return replacement;
+        const hasNamedGroups = typeof args[args.length - 1] === 'object';
+        const captures = args.slice(1, args.length - (hasNamedGroups ? 3 : 2)) as (string | undefined)[];
+        return expandReplacement(replacement, match, captures);
+      });
+    });
+    if (count > 0) { changed.set(file, { text: parts.join(''), count }); total += count; }
+  }
+  return { changed, total };
+}
+
+/** Expands $$, $& and $1..$99 like String.prototype.replace does. */
+function expandReplacement(repl: string, match: string, captures: (string | undefined)[]): string {
+  return repl.replace(/\$(\$|&|\d{1,2})/g, (whole, g: string) => {
+    if (g === '$') return '$';
+    if (g === '&') return match;
+    const n = Number(g);
+    return n >= 1 && n <= captures.length ? (captures[n - 1] ?? '') : whole;
+  });
+}

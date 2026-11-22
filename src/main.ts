@@ -14,7 +14,8 @@ import { applyPrefs, isDark, loadPrefs, Prefs, sanitize, savePrefs } from './pre
 import { forward, inverse, mapInputs, parseSynctexFile, SyncTex } from './synctex';
 import { ProjectIndex } from './projectindex';
 import { projectOutline, wordCount } from './outline';
-import { searchTexts } from './search';
+import { replaceInTexts, searchTexts } from './search';
+import { daysLeft, expiryState } from './expiry';
 import { diffLines } from './diff';
 import { citeKeysIn, completionSource, labelsIn } from './complete';
 import { SETUP_FILES, setupStatus } from './setup';
@@ -166,7 +167,8 @@ async function connect(s: store.Settings) {
   index = new ProjectIndex(ws);
   open.clear();
   current = null;
-  hideBanner();
+  setupBanner = null;
+  renderBanner();
   setStatus('Loading repository…', 'busy');
   try {
     await ws.load();
@@ -450,6 +452,34 @@ async function runSearch() {
     b.addEventListener('click', () => void openAt(h.file, h.line, { col: h.col, len: h.length }));
     results.append(b);
   }
+}
+
+/** Replace all matches of the current search in the whole project (stays local until Save; undo = File history or Save-less reload). */
+async function replaceAll() {
+  if (!ws || !project || !index) return;
+  const q = $<HTMLInputElement>('search-q').value;
+  const replacement = $<HTMLInputElement>('replace-q').value;
+  if (!q) { setStatus('Type what to search for first.'); return; }
+  flushEdits();
+  const texts = await index.texts(projectRoot());
+  const r = replaceInTexts(texts, q, replacement, { regex: $<HTMLInputElement>('search-re').checked, caseSensitive: $<HTMLInputElement>('search-case').checked });
+  if (r.error) { setStatus(`Invalid pattern: ${r.error}`, 'error'); return; }
+  if (!r.total) { setStatus('No matches to replace.'); return; }
+  const list = [...r.changed].slice(0, 12).map(([f, c]) => `  ${relative(f)}: ${c.count}`).join('\n');
+  const more = r.changed.size > 12 ? `\n  … and ${r.changed.size - 12} more files` : '';
+  if (!confirm(`Replace ${r.total} match(es) in ${r.changed.size} file(s) with "${replacement}"?\n\n${list}${more}\n\nNothing is saved to GitHub until you press Save. To undo after saving, use File history.`)) return;
+  for (const [file, c] of r.changed) {
+    ws.put(file, encodeText(c.text));
+    open.delete(file);
+  }
+  persistDrafts();
+  const cur = current;
+  if (cur && r.changed.has(cur)) { closeEditor(); void openFile(cur); }
+  renderTree();
+  setEnabled();
+  scheduleIndex(300);
+  setStatus(`Replaced ${r.total} match(es) in ${r.changed.size} file(s). Review, then Save.`);
+  void runSearch();
 }
 
 /** Opens a file and puts the cursor on a line (optionally selecting a match). */
@@ -1090,14 +1120,22 @@ async function checkSetup() {
   if (!ws) return;
   try {
     const st = await setupStatus(ws.files);
-    if (!st.needed) { hideBanner(); return; }
-    const text = st.missing.length
+    setupBanner = !st.needed ? null : st.missing.length
       ? 'This repository is not set up for compiling yet.'
       : 'A newer version of the compile workflow is available.';
-    showBanner(text, 'Set up', () => openSetup());
+    renderBanner();
   } catch (e) {
     console.error('Setup check failed', e);
   }
+}
+
+/** One banner slot, most urgent first: token expired / expiring, then repository set-up. */
+let setupBanner: string | null = null;
+function renderBanner() {
+  const ex = settings ? expiryState(settings.expires) : null;
+  if (ex) showBanner(ex.text, 'Update token', () => openSettings(), ex.level === 'expired' ? 'error' : 'warn');
+  else if (setupBanner) showBanner(setupBanner, 'Set up', () => openSetup());
+  else hideBanner();
 }
 
 async function openSetup() {
@@ -1156,6 +1194,7 @@ function openSettings(error = '') {
   const tokenInput = $<HTMLInputElement>('s-token');
   tokenInput.value = '';
   tokenInput.placeholder = settings ? '(unchanged — paste a new token to replace it)' : 'github_pat_…';
+  $<HTMLInputElement>('s-expires').value = settings?.expires ?? '';
   $<HTMLInputElement>('s-pass').value = '';
   const mode = settings?.mode ?? 'device';
   const radio = document.querySelector<HTMLInputElement>(`input[name="s-mode"][value="${mode}"]`);
@@ -1176,8 +1215,15 @@ async function submitSettings() {
     branch: $<HTMLInputElement>('s-branch').value.trim() || 'main',
     token: $<HTMLInputElement>('s-token').value.trim() || settings?.token || '',
     mode,
+    expires: $<HTMLInputElement>('s-expires').value || undefined,
   };
   if (!next.owner || !next.repo || !next.token) { err.textContent = 'Owner, repository and token are required.'; return; }
+  if (next.expires) {
+    const left = daysLeft(next.expires);
+    // A brand-new token must not already be expired; keeping an old, expired date is allowed so the user can still open the dialog.
+    if (left === null) { err.textContent = 'The expiry date is not valid.'; return; }
+    if (left < 0 && $<HTMLInputElement>('s-token').value.trim()) { err.textContent = 'That expiry date is in the past. Enter the date of the new token.'; return; }
+  }
   if (!/^[A-Za-z0-9-]+$/.test(next.owner) || !/^[A-Za-z0-9._-]+$/.test(next.repo)) { err.textContent = 'Owner or repository contains characters GitHub does not allow.'; return; }
   if (mode === 'encrypted' && pass.length < 8) { err.textContent = 'Choose a passphrase of at least 8 characters.'; return; }
   if (ws?.dirty && (next.owner !== settings?.owner || next.repo !== settings?.repo || next.branch !== settings?.branch)
@@ -1455,6 +1501,7 @@ $('download-pdf').addEventListener('click', () => {
 });
 for (const t of ['files', 'outline', 'search'] as const) $(`tab-${t}`).addEventListener('click', () => setSideTab(t));
 $('search-form').addEventListener('submit', (e) => { e.preventDefault(); clearTimeout(searchTimer); void runSearch(); });
+$('replace-form').addEventListener('submit', (e) => { e.preventDefault(); void replaceAll(); });
 for (const id of ['search-q', 'search-case', 'search-re']) {
   $(id).addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => void runSearch(), 300); });
   $(id).addEventListener('change', () => void runSearch());
@@ -1479,6 +1526,7 @@ window.addEventListener('beforeunload', (e) => {
 });
 // Pick up pushes from Codex/Claude or another device when coming back to the tab.
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') renderBanner(); // the expiry date may have come within 10 days meanwhile
   if (document.visibilityState === 'visible' && ws && !saving) void refresh();
 });
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (prefs.theme === 'auto') rebuildEditorStates(); });

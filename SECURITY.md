@@ -32,7 +32,7 @@ Three ways to keep it in the browser (Connection and security → "Keep the toke
    or tampered data is rejected. There is no recovery if you forget the passphrase: connect again with a new token.
 3. **Only until the tab closes** — `sessionStorage`, wiped when the tab is closed.
 
-"Clear this browser" removes the token, drafts and preferences. Revoke a token on GitHub (Settings → Developer
+The connection window also takes the token's expiry date (optional, not secret); the app then shows a banner from 10 days before it ends. "Clear this browser" removes the token, drafts and preferences. Revoke a token on GitHub (Settings → Developer
 settings) if a device is lost.
 
 ### Known limit: sites on the same address share browser storage
@@ -69,7 +69,7 @@ Compiles of one project cancel each other (newest wins).
 
 ## Checked on 22 November 2026
 
-* Unit tests (40): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
+* Unit tests (48): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
   logic; path validation; SyncTeX; log parsing.
 * Real GitHub run of the hardened compile job on the thesis, an XeLaTeX+Biber project and a pdfLaTeX project: all `ok`;
   thesis identical to the earlier build (170 pages, 66 warnings).

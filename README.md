@@ -17,7 +17,7 @@ spell-check; auto-completion for commands, environments, `\ref{…}` labels, `\c
 (click to toggle actual size); upload, new file, rename/move, delete, download, project ZIP.
 
 **Navigating** — *Outline* of chapters and sections across `\input`/`\include` files; *Search* in the whole project
-(Ctrl+Shift+F, plain or regular expression); *File history* with a coloured comparison and one-click restore.
+(Ctrl+Shift+F, plain or regular expression) with **Replace all** (stays local until you Save); *File history* with a coloured comparison and one-click restore.
 
 **PDF** — selectable text; clickable table of contents, cross references, citations and URLs; zoom; download.
 **SyncTeX both ways:** double-click in the PDF (or Ctrl/Cmd+click, see Preferences) to jump to the source line;
@@ -28,9 +28,9 @@ device), edits to different files are merged; for the same file the app asks whi
 overwrite. Unsaved text survives a reload. **Compile** (Ctrl+Enter) saves, runs the workflow and shows the PDF and a log
 with clickable errors. Returning to the tab loads changes pushed from elsewhere.
 
-**Other** — light/dark/system theme, font size, resizable panels, phone layout, passphrase-encrypted token storage.
+**Other** — light/dark/system theme, font size, resizable panels, phone layout, passphrase-encrypted token storage, and an optional **token expiry reminder**: enter the date you chose on GitHub and the app warns you 10 days before it ends.
 
-Not included: real-time co-editing, in-browser compiling, AI chat, replace-in-project.
+Not included: real-time co-editing, in-browser compiling, AI chat.
 
 ## Set up your own repository (you or a friend) — about two minutes, no command line
 

@@ -67,6 +67,10 @@
           <label class="check" title="Match case"><input id="search-case" type="checkbox"><span>Aa</span></label>
           <label class="check" title="Regular expression"><input id="search-re" type="checkbox"><span>.*</span></label>
         </form>
+        <form id="replace-form" class="search-form">
+          <input id="replace-q" type="text" placeholder="Replace with…" autocomplete="off" spellcheck="false" aria-label="Replace with">
+          <button id="replace-all" type="submit" class="btn sm" title="Replace every match in the project (nothing is saved until you press Save)">Replace all</button>
+        </form>
         <div id="search-summary" class="hint"></div>
         <div id="search-results" class="results"></div>
       </div>
@@ -145,7 +149,9 @@
       <label>Repository<input id="s-repo" autocomplete="off" spellcheck="false" placeholder="prism-data"></label>
       <label>Branch<input id="s-branch" autocomplete="off" spellcheck="false" value="main"></label>
       <label class="wide">Fine-grained personal access token<input id="s-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+      <label class="wide">Token expiry date (optional)<input id="s-expires" type="date"></label>
     </div>
+    <p class="hint">If you enter the expiry date you chose on GitHub, the app reminds you 10 days before it ends (GitHub also emails you).</p>
     <fieldset class="modes">
       <legend>Keep the token in this browser</legend>
       <label class="radio"><input type="radio" name="s-mode" value="device" checked><span><strong>On this device</strong> — convenient; readable by any script on this site's address.</span></label>

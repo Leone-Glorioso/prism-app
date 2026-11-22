@@ -1,0 +1,28 @@
+name: texlive mirror
+
+# Copies the official texlive/texlive image to this organisation's container registry with zstd-compressed layers.
+# GitHub runners unpack zstd much faster than gzip, which shortens every compile by about a minute.
+# Compiling falls back to the official image whenever the mirror is missing, so this is only a speed-up.
+on:
+  schedule:
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Log in to the registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Re-compress and push
+        run: |
+          docker buildx create --use --driver docker-container --name zstd >/dev/null
+          printf 'FROM texlive/texlive:latest\n' | docker buildx build --provenance=false \
+            --output type=image,name=ghcr.io/prism-latex/texlive:latest,push=true,compression=zstd,force-compression=true,oci-mediatypes=true -
+      - name: Show the result
+        run: docker buildx imagetools inspect ghcr.io/prism-latex/texlive:latest | head -20

@@ -74,7 +74,7 @@ Not included: real-time co-editing, in-browser compiling, AI chat.
   ([additional terms](https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features),
   [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)); the current text on
   those pages is what counts.
-* Licences of the bundled software: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+* Licence: this app is released under the [MIT licence](LICENSE). Licences of the bundled software: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Set up your own repository (you or a friend) — about two minutes, no command line
 

@@ -6,7 +6,7 @@ Security and privacy: see [SECURITY.md](SECURITY.md).
 
 | Part | Where | Cost |
 |---|---|---|
-| Web app (this folder) | GitHub Pages, from a **public** repo `prism-app` (code only, no thesis content) | free |
+| Web app (this folder) | GitHub Pages, from a **public** repo `prism-latex/prism-app` in its **own organisation** (own web address `prism-latex.github.io`; code only, no thesis content) | free |
 | Projects | **private** repo (for example `prism-data`) with all projects + `prism-projects.json` | free |
 | Compiler | GitHub Actions in that repo (`compile.yml`, full TeX Live container, latexmk, BibTeX/Biber) | free allowance for private repos |
 

@@ -35,12 +35,14 @@ Three ways to keep it in the browser (Connection and security → "Keep the toke
 The connection window also takes the token's expiry date (optional, not secret); the app then shows a banner from 10 days before it ends. "Clear this browser" removes the token, drafts and preferences. Revoke a token on GitHub (Settings → Developer
 settings) if a device is lost.
 
-### Known limit: sites on the same address share browser storage
+### Sites on the same address share browser storage (handled by giving the app its own address)
 
-GitHub Pages gives every repository of an account the same web address (`<user>.github.io`). Browser storage is shared
-by everything served from one address, so **another Pages site of the same account could read a token stored
-"on this device"** (plain). If the account that hosts this app has any other Pages site, that is a real exposure. Use the
-encrypted or session mode, or serve this app from a separate GitHub organisation/account that has no other Pages sites.
+GitHub Pages gives every repository of an account or organisation the same web address (`<name>.github.io`). Browser
+storage and scripts are shared by everything served from one address, so another Pages site there could read a token
+stored "on this device" (plain). **This app therefore lives alone in its own GitHub organisation**
+(`prism-latex.github.io/prism-app/`). Keep it that way: do not publish any other Pages site from that organisation.
+Put other websites in a different organisation or account, and give any future app that stores secrets its own
+organisation too. Organisations are free. (A custom domain per site would be the paid alternative.)
 
 ## Compile isolation
 

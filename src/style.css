@@ -480,6 +480,9 @@ button.brand:hover { background: var(--hover); }
 .home-empty h2 { color: var(--text); margin: 0 0 6px; }
 body[data-mode="home"] #layout, body[data-mode="home"] .view-tabs, body[data-mode="home"] .project-picker,
 body[data-mode="home"] #compile { display: none; }
+/* Not connected: only the start (sign-in) page, never the empty editor. */
+body[data-mode="landing"] .view-tabs, body[data-mode="landing"] .project-picker, body[data-mode="landing"] #compile,
+body[data-mode="landing"] #save { display: none; }
 body:not([data-mode="home"]) #home { display: none; }
 #p-advanced { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 #p-advanced .check { align-items: flex-start; }

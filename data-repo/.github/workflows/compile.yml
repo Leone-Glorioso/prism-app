@@ -66,14 +66,8 @@ jobs:
             --user "$(id -u):$(id -g)" -e HOME=/tmp/home \
             -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e TEXLIVE_IMAGE -e COMPILE_TIMEOUT_SECONDS="$TIME_LIMIT_SECONDS" \
             -e max_print_line=10000 -e error_line=254 -e half_error_line=238 \
-            -v "$GITHUB_WORKSPACE:/work" -w /work "$TEXLIVE_IMAGE" bash -c '
-              mkdir -p "$HOME/.config/fontconfig"
-              # Let XeLaTeX/LuaLaTeX find TeX Live fonts by name (as MiKTeX does on Windows); per-user, no root needed.
-              conf="$(kpsewhich -var-value TEXMFSYSVAR)/fonts/conf/texlive-fontconfig.conf"
-              if [ -f "$conf" ] && command -v fc-cache >/dev/null; then
-                cp "$conf" "$HOME/.config/fontconfig/fonts.conf" && fc-cache -fs >/dev/null 2>&1 || true
-              fi
-              bash .github/scripts/compile.sh "$PROJECT" /work/.prism-out'
+            -v "$GITHUB_WORKSPACE:/work" -w /work "$TEXLIVE_IMAGE" \
+            bash .github/scripts/compile.sh "$PROJECT" /work/.prism-out
 
       - name: Publish result to builds branch
         env:

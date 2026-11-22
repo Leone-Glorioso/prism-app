@@ -131,6 +131,8 @@ function setEnabled() {
   $('compile').classList.toggle('danger-solid', compiling);
   ($('forward') as HTMLButtonElement).disabled = !(lastBuild?.pdf && current && !view.dom.hidden);
   ($('history') as HTMLButtonElement).disabled = !(current && ws?.files.has(current));
+  // Not connected: the start (sign-in) page, never the empty editor.
+  if (!ws && document.body.dataset.mode !== 'settings') setMode('landing');
   if (!current) {
     $('empty-title').textContent = hasProject ? 'No file open' : connected ? 'No projects yet' : 'Not connected';
     $('empty-text').textContent = hasProject ? 'Choose a file from the list on the left.' : connected ? 'Create one with the + button at the top.' : 'Connect your repository first.';
@@ -196,6 +198,8 @@ async function connect(s: store.Settings) {
   setupBanner = null;
   renderBanner();
   setStatus('Loading repository…', 'busy');
+  setMode('home'); // show the (still empty) projects page while loading, not the editor
+  $('home-note').textContent = 'Loading your projects…';
   try {
     await ws.load();
   } catch (e) {
@@ -271,7 +275,7 @@ const rootOf = (m: ManifestEntry) => m.MainFile.replace(/\\/g, '/').split('/')[0
 const hasLocalChanges = (m: ManifestEntry) => !!ws && [...ws.changes.keys()].some((p) => p.startsWith(`${rootOf(m)}/`));
 const ENGINE_LABEL: Record<string, string> = { pdflatex: 'pdfLaTeX', xelatex: 'XeLaTeX', lualatex: 'LuaLaTeX' };
 
-function setMode(m: 'home' | 'editor' | 'settings') {
+function setMode(m: 'home' | 'editor' | 'settings' | 'landing') {
   document.body.dataset.mode = m;
 }
 
@@ -1035,9 +1039,10 @@ async function runCompile() {
   setEnabled(); // the Compile button becomes Stop
   let phaseText = 'Starting compile…';
   setStatus(phaseText, 'busy');
-  const tick = window.setInterval(() => {
-    if (token === compileSeq) setStatus(`${phaseText} ${Math.round((Date.now() - started) / 1000)}s`, 'busy');
-  }, 1000);
+  const paintTick = () => { if (token === compileSeq) setStatus(`${phaseText} ${Math.round((Date.now() - started) / 1000)}s`, 'busy'); };
+  const tick = window.setInterval(paintTick, 1000);
+  const onVisible = () => { if (document.visibilityState === 'visible') paintTick(); }; // background tabs slow timers down
+  document.addEventListener('visibilitychange', onVisible);
   try {
     const build = await compile(gh, settings.branch, name, (p, run) => {
       if (run && token === compileSeq) currentRunId = run.id;
@@ -1046,8 +1051,10 @@ async function runCompile() {
     if (token !== compileSeq || project?.Project !== name) return;
     await showBuild(build);
     const r = build.result;
-    setStatus(r.status === 'ok' ? `Compiled in ${r.duration_seconds}s.`
-      : r.status === 'warning' ? `Compiled with errors (${r.duration_seconds}s): ${r.first_error}`
+    const total = Math.round((Date.now() - started) / 1000);
+    const times = `${r.duration_seconds}s of compiling, ${total}s in total`; // the rest is GitHub starting the machine and loading TeX Live
+    setStatus(r.status === 'ok' ? `Compiled (${times}).`
+      : r.status === 'warning' ? `Compiled with errors (${times}): ${r.first_error}`
       : `Compile failed: ${r.first_error || r.status}`, r.status === 'ok' ? 'info' : 'error');
     if (r.status === 'error' || r.status === 'timeout') showOutput('log');
   } catch (e) {
@@ -1056,6 +1063,7 @@ async function runCompile() {
     else setStatus(errorText(e), 'error');
   } finally {
     clearInterval(tick);
+    document.removeEventListener('visibilitychange', onVisible);
     if (token === compileSeq) { compiling = false; currentRunId = null; setEnabled(); }
   }
 }

@@ -56,6 +56,17 @@ case "$engine" in
   *) echo "Unsupported engine: $engine" > "$out/output.log"; write_result error 5 "$main" "$engine" "Unsupported engine: $engine" 0; exit 0 ;;
 esac
 
+# Let XeLaTeX/LuaLaTeX find TeX Live fonts by name (as MiKTeX does on Windows); per-user, no root needed.
+# Building the font cache takes about 25 seconds, so pdfLaTeX projects skip it.
+mkdir -p "$HOME"
+if [ "$engine" != pdflatex ]; then
+  mkdir -p "$HOME/.config/fontconfig"
+  conf="$(kpsewhich -var-value TEXMFSYSVAR)/fonts/conf/texlive-fontconfig.conf"
+  if [ -f "$conf" ] && command -v fc-cache >/dev/null; then
+    cp "$conf" "$HOME/.config/fontconfig/fonts.conf" && fc-cache -fs >/dev/null 2>&1 || true
+  fi
+fi
+
 dir="$(dirname "$main")"
 base="$(basename "$main" .tex)"
 start=$(date +%s)

@@ -30,6 +30,9 @@ export interface WorkflowRun {
 const seg = (p: string) => p.split('/').map(encodeURIComponent).join('/');
 
 export class GitHub {
+  /** Called when GitHub answers 401: the token is no longer accepted (expired or revoked). */
+  onUnauthorized?: () => void;
+
   constructor(private token: string, public owner: string, public repo: string) {}
 
   private get base() {
@@ -57,6 +60,7 @@ export class GitHub {
     } catch (e) {
       throw new GitHubError(0, `Network error talking to GitHub: ${(e as Error).message}`);
     }
+    if (res.status === 401) this.onUnauthorized?.();
     if (!res.ok) {
       let body: unknown;
       try { body = await res.json(); } catch { /* not JSON */ }
@@ -154,6 +158,11 @@ export class GitHub {
     const q = new URLSearchParams({ event: 'workflow_dispatch', per_page: '50', created: `>=${createdSince}` });
     const r = await this.json<{ workflow_runs: WorkflowRun[] }>('GET', `/actions/workflows/${encodeURIComponent(workflow)}/runs?${q}`);
     return r.workflow_runs;
+  }
+
+  /** Asks GitHub to stop a running workflow run. */
+  async cancelRun(id: number): Promise<void> {
+    await this.request('POST', `/actions/runs/${id}/cancel`);
   }
 
   getRun(id: number) {

@@ -25,6 +25,7 @@
     <div class="actions">
       <button id="save" class="btn" data-icon="save" title="Save (Ctrl+S)" disabled><span class="label">Save</span></button>
       <button id="compile" class="btn primary" data-icon="play" title="Save and compile (Ctrl+Enter)" disabled><span class="label">Compile</span></button>
+      <button id="help" class="icon-btn" data-icon="help" title="Help and shortcuts" aria-label="Help and shortcuts"></button>
       <button id="connection" class="icon-btn" data-icon="shield" title="Connection and security" aria-label="Connection and security"></button>
       <button id="settings" class="icon-btn" data-icon="settings" title="Preferences" aria-label="Preferences"></button>
     </div>
@@ -50,6 +51,7 @@
           <input id="home-search" type="search" placeholder="Search projects…" autocomplete="off" spellcheck="false" aria-label="Search projects">
           <label class="sr-only" for="home-sort">Sort by</label>
           <select id="home-sort"><option value="recent">Last edited</option><option value="name">Name</option></select>
+          <button id="home-compiler" class="btn" data-icon="sliders" title="TeX Live version and time limit for all projects"><span class="label">Compiler</span></button>
           <button id="home-upload" class="btn" data-icon="upload"><span class="label">Upload ZIP</span></button>
           <button id="home-new" class="btn primary" data-icon="plus"><span class="label">New project</span></button>
         </div>
@@ -123,6 +125,11 @@
         <div class="segmented" role="group" aria-label="Output">
           <button id="show-pdf" data-icon="pdf" aria-pressed="true">PDF</button>
           <button id="show-log" data-icon="log" aria-pressed="false"><span class="label">Log</span></button>
+        </div>
+        <div id="page-nav" class="page-nav" hidden>
+          <label class="sr-only" for="pdf-page">Page</label>
+          <input id="pdf-page" type="number" min="1" step="1" inputmode="numeric" title="Go to page">
+          <span>/ <span id="pdf-total">0</span></span>
         </div>
         <div class="tools">
           <button id="zoom-out" class="icon-btn sm" data-icon="zoomOut" title="Zoom out" aria-label="Zoom out"></button>
@@ -250,12 +257,75 @@
     <div id="p-advanced">
       <label class="check"><input id="p-rc" type="checkbox"><span>Use this project's <code>.latexmkrc</code> (needed for glossaries and other custom build steps)</span></label>
       <label class="check"><input id="p-shell" type="checkbox"><span>Allow shell escape (packages that run programs, for example pythontex). Runs only in the isolated compile container.</span></label>
+      <label class="check"><input id="p-clean" type="checkbox"><span>Clean build: delete old auxiliary files before every compile</span></label>
+      <label>Extra latexmk options (advanced)<input id="p-args" autocomplete="off" spellcheck="false" placeholder="for example: -g"></label>
+      <button id="p-open-compiler" class="btn sm" type="button">TeX Live version and time limit for all projects…</button>
     </div>
     <p id="p-error" class="error" role="alert"></p>
     <div class="dialog-buttons">
       <span class="sep"></span>
       <button id="p-cancel" class="btn">Cancel</button>
       <button id="p-ok" class="btn primary">OK</button>
+    </div>
+  </dialog>
+
+  <dialog id="compiler-dialog" aria-labelledby="c-title">
+    <h2 id="c-title">Compiler</h2>
+    <p class="hint">These settings apply to every project in this repository and are saved in <code>prism-compiler.json</code>. Compiling uses them after you save.</p>
+    <label>TeX Live version
+      <select id="c-texlive"></select>
+    </label>
+    <p id="c-texlive-hint" class="hint"></p>
+    <label>Time limit per compile (minutes)<input id="c-timeout" type="number" min="1" max="40" step="1"></label>
+    <p id="c-last" class="hint"></p>
+    <p id="c-error" class="error" role="alert"></p>
+    <div class="dialog-buttons">
+      <span class="sep"></span>
+      <button id="c-cancel" class="btn">Cancel</button>
+      <button id="c-ok" class="btn primary">Apply</button>
+    </div>
+  </dialog>
+
+  <dialog id="help-dialog" class="wide-dialog" aria-labelledby="help-title">
+    <h2 id="help-title">Help and shortcuts</h2>
+    <div class="help-grid">
+      <section>
+        <h3>Write</h3>
+        <dl>
+          <dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Save (one commit to GitHub)</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>Enter</kbd></dt><dd>Save and compile</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>B</kbd> / <kbd>I</kbd></dt><dd>Bold / emphasis around the selection</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>/</kbd></dt><dd>Comment or uncomment lines</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>F</kbd></dt><dd>Find in this file</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>Space</kbd></dt><dd>Show suggestions</dd>
+          <dt>type <code>igure</code> …</dt><dd>Ready-made blocks: <code>igure 	able equation align itemize enumerate rame 	ikz plot code 	heorem</code>. Enter inserts, Tab moves to the next blank.</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Find your way</h3>
+        <dl>
+          <dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>F</kbd></dt><dd>Search (and replace) in the whole project</dd>
+          <dt>Outline tab</dt><dd>Chapters and sections across all included files</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>J</kbd></dt><dd>Show the current line in the PDF</dd>
+          <dt>Double-click in the PDF</dt><dd>Jump to that place in the source</dd>
+          <dt>Clock icon</dt><dd>History of the open file, compare and restore</dd>
+          <dt>Logo / Projects</dt><dd>Back to all projects</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Good to know</h3>
+        <ul>
+          <li>Nothing reaches GitHub until you press <strong>Save</strong>. Unsaved text is kept in this browser.</li>
+          <li>The compiler is a complete TeX Live in GitHub Actions. Choose its version under <em>Compiler</em> on the start screen.</li>
+          <li>If two people (or Codex or Claude) edit the same file, the app asks which version to keep.</li>
+          <li>Your token stays in this browser only. Use <em>Connection and security</em> to change or clear it.</li>
+        </ul>
+        <p class="hint">Prism web <span id="app-version"></span></p>
+      </section>
+    </div>
+    <div class="dialog-buttons">
+      <span class="sep"></span>
+      <button id="help-close" class="btn primary">Close</button>
     </div>
   </dialog>
 

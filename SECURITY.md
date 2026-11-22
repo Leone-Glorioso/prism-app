@@ -53,6 +53,13 @@ persist credentials). The result is published to a `builds/*` branch by a separa
 own actions, pinned to commit hashes (the repository requires SHA pinning). Per project, the manifest can switch on shell escape and the project's own `latexmkrc`; both run only inside this same container (no network, no privileges, no secrets), so they cannot reach anything outside it. A project name coming from the app is passed
 as an environment variable, never pasted into a shell command, and the main file must live inside that project's folder.
 
+**Compiler settings** (`prism-compiler.json`) can select only `latest` or a TeX Live year (the official `texlive/texlive` image
+of that year) and a time limit of 1–40 minutes; the workflow validates the values again and falls back to the defaults for
+anything else, so a hand-edited file cannot choose another image. **Extra latexmk options** are limited to plain characters
+and passed as separate words, never through a shell (shell characters, quotes and `$` are rejected, and tested on real
+runners). Only the owner of the token can change these files; a stolen token could change them, but the container stays
+isolated either way.
+
 ## Conflicts and "locking"
 
 There are no pessimistic locks. Saving is **fast-forward only**: if the branch moved since you opened a file (Codex,
@@ -71,7 +78,7 @@ Compiles of one project cancel each other (newest wins).
 
 ## Checked on 22 November 2026
 
-* Unit tests (58): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
+* Unit tests (63): token vault round trip, wrong passphrase, tampering, fresh IV; token never in URL; save/merge/conflict
   logic; path validation; SyncTeX; log parsing.
 * Real GitHub run of the hardened compile job on the thesis, an XeLaTeX+Biber project and a pdfLaTeX project: all `ok`;
   thesis identical to the earlier build (170 pages, 66 warnings).

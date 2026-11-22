@@ -25,6 +25,14 @@ blocks** (type `\figure`, `\table`, `\equation`, `\align`, `\itemize`, `\enumera
 `\theorem` and press Enter, then Tab through the blanks); image preview (click to toggle actual size); upload, new file,
 rename/move, delete, download.
 
+**Compiler settings (you choose, and it really changes)** — *Compiler* on the start screen: the **TeX Live version**
+(latest, or any frozen year 2025 … 2013 — the same document then compiles exactly as in that year) and the **time limit**
+(1–40 minutes). They are saved as `prism-compiler.json` in your repository; no workflow editing and no extra token permission
+needed. Per project (*Project settings*): engine, main file, **clean build**, **extra latexmk options**, `.latexmkrc`, shell
+escape. After a compile the bar shows the TeX Live year that was used and the exact latexmk command (hover). Verified on
+real GitHub runners: choosing 2024 compiled with TeX Live 2024, latest with 2026, an invalid hand-written value falls back to
+latest, unsafe extra options are rejected, and a 1-minute limit stopped a 200-second job.
+
 **What LaTeX can do here** — the compile container is a complete TeX Live: pdfLaTeX, XeLaTeX, LuaLaTeX, BibTeX and Biber
 (BibLaTeX), makeindex, TikZ/PGFPlots, Beamer, polyglossia/Greek, `minted` code highlighting, any package TeX Live ships. In *Project
 settings*: **use the project's `.latexmkrc`** (needed for glossaries/acronyms and custom build steps) and **allow shell
@@ -34,7 +42,8 @@ Not available: programs that are not in TeX Live (Inkscape for the `svg` package
 **Navigating** — *Outline* of chapters and sections across `\input`/`\include` files; *Search* in the whole project
 (Ctrl+Shift+F, plain or regular expression) with **Replace all** (stays local until you Save); *File history* with a coloured comparison and one-click restore.
 
-**PDF** — selectable text; clickable table of contents, cross references, citations and URLs; zoom; download.
+**PDF** — selectable text; clickable table of contents, cross references, citations and URLs; page box ("12 / 170", type a
+number to jump); zoom; download. **Stop** cancels a running compile.
 **SyncTeX both ways:** double-click in the PDF (or Ctrl/Cmd+click, see Preferences) to jump to the source line;
 "Show this line in the PDF" (button or Ctrl+Alt+J) scrolls to and highlights the spot; optionally the PDF follows the cursor.
 
@@ -45,7 +54,27 @@ with clickable errors. Returning to the tab loads changes pushed from elsewhere.
 
 **Other** — light/dark/system theme, font size, resizable panels, phone layout, passphrase-encrypted token storage, and an optional **token expiry reminder**: enter the date you chose on GitHub and the app warns you 10 days before it ends.
 
+**Convenience and safety nets** — drag files onto the file list to upload them (drop a ZIP on the start screen to import a
+project); Ctrl+B / Ctrl+I bold and emphasis; the **?** button lists every shortcut; if your token stops working a red banner
+explains it and your edits stay in the browser; offline and unexpected-error messages instead of silence.
+
 Not included: real-time co-editing, in-browser compiling, AI chat.
+
+## Fair use and rules
+
+* **GitHub Actions** is meant for building and testing what is in the repository. Compiling your own documents in the
+  repository that holds them is that kind of use. GitHub's terms say Actions must not be used as a general serverless
+  service or content-delivery network and may be restricted if abused; keep the compile workflow for your own documents and
+  do not point it at unrelated heavy computation. Free private repositories get a monthly allowance of minutes (2,000 at the
+  time of writing); a compile of a typical document takes under a minute, a 170-page thesis about half a minute.
+* **GitHub Pages** hosts the app: published sites are limited to 1 GB and about 100 GB of traffic a month, and Pages is not for
+  commercial transactions or for sending passwords or card numbers. The app is a static page; your token never leaves your
+  browser except to `api.github.com`.
+* Summary written on 22 November 2026 from GitHub's public pages
+  ([additional terms](https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features),
+  [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)); the current text on
+  those pages is what counts.
+* Licences of the bundled software: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Set up your own repository (you or a friend) — about two minutes, no command line
 

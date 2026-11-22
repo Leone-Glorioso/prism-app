@@ -16,6 +16,10 @@ export interface BuildResult {
   finished_at: string;
   sha: string;
   run_id: string;
+  /** The latexmk command line that was run (newer workflow versions only). */
+  command?: string;
+  /** The TeX Live image that was used (newer workflow versions only). */
+  image?: string;
 }
 
 export interface Build {

@@ -489,3 +489,18 @@ body:not([data-mode="home"]) #home { display: none; }
   .home-tools input[type="search"] { width: 100%; flex: 1 1 100%; }
   .home-tools .btn .label { display: inline; }
 }
+
+/* Help, page navigation, drag and drop */
+.help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 24px; max-height: 60vh; overflow: auto; }
+.help-grid h3 { margin: 10px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.help-grid dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0; font-size: 13px; }
+.help-grid dt { white-space: nowrap; }
+.help-grid dd { margin: 0; color: var(--muted); }
+.help-grid ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.help-grid li { margin: 5px 0; }
+.page-nav { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); margin-left: auto; margin-right: 4px; }
+.page-nav input { width: 56px; min-height: 28px; text-align: right; padding: 0 6px; }
+.page-nav + .tools { margin-left: 0; }
+.panel.files.dropping, #home.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-soft); }
+.btn.danger-solid { background: var(--error); border-color: var(--error); color: #fff; }
+@media (max-width: 899px) { .help-grid { max-height: 70vh; } }

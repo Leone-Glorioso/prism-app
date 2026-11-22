@@ -1,7 +1,7 @@
 // CodeMirror 6 setup: one view, one EditorState per open file (keeps undo history per file).
 
 import { basicSetup } from 'codemirror';
-import { EditorState, Extension } from '@codemirror/state';
+import { EditorSelection, EditorState, Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
@@ -30,7 +30,17 @@ export function createView(parent: HTMLElement): EditorView {
   return new EditorView({ parent });
 }
 
+/** Wraps every selection in `open` … `close`; with no selection it inserts both and puts the cursor between them. */
+export function wrapSelection(view: EditorView, open: string, close: string): boolean {
+  view.dispatch(view.state.changeByRange((range) => ({
+    changes: [{ from: range.from, insert: open }, { from: range.to, insert: close }],
+    range: EditorSelection.range(range.from + open.length, range.to + open.length),
+  })));
+  return true;
+}
+
 export function createState(path: string, text: string, hooks: EditorHooks, env: EditorEnv): EditorState {
+  const tex = isTexLike(path);
   const extensions: Extension[] = [
     basicSetup,
     EditorView.lineWrapping,
@@ -38,6 +48,10 @@ export function createState(path: string, text: string, hooks: EditorHooks, env:
       { key: 'Mod-s', preventDefault: true, run: () => { hooks.onSave(); return true; } },
       { key: 'Mod-Enter', preventDefault: true, run: () => { hooks.onCompile(); return true; } },
       { key: 'Mod-Alt-j', preventDefault: true, run: () => { hooks.onForward(); return true; } },
+      ...(tex ? [
+        { key: 'Mod-b', preventDefault: true, run: (v: EditorView) => wrapSelection(v, '\\textbf{', '}') },
+        { key: 'Mod-i', preventDefault: true, run: (v: EditorView) => wrapSelection(v, '\\emph{', '}') },
+      ] : []),
     ]),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) hooks.onChange(path, u.state);
@@ -51,7 +65,7 @@ export function createState(path: string, text: string, hooks: EditorHooks, env:
       autocapitalize: 'off',
     }),
   ];
-  if (isTexLike(path)) {
+  if (tex) {
     extensions.push(texLanguage);
     // languageData instead of autocompletion({override}): basicSetup already configures autocompletion().
     extensions.push(EditorState.languageData.of(() => [{ autocomplete: env.complete }]));

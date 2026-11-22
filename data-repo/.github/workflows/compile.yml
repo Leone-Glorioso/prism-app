@@ -22,11 +22,6 @@ concurrency:
 permissions:
   contents: write
 
-env:
-  # Full TeX Live (pdfLaTeX, XeLaTeX, LuaLaTeX, BibTeX, Biber, latexmk).
-  # shortcut: tracks the latest TeX Live; pin to a TLyyyy-historic tag once a year's output is accepted.
-  TEXLIVE_IMAGE: texlive/texlive:latest
-
 jobs:
   compile:
     runs-on: ubuntu-latest
@@ -37,16 +32,39 @@ jobs:
         with:
           persist-credentials: false
 
+      # Compiler settings live in prism-compiler.json (edited in the web app, no workflow change needed):
+      #   "texlive": "latest" or a year 2013..2029 (official texlive/texlive image of that year), "timeoutMinutes": 1..40.
+      # Only these validated values reach the next step; anything else falls back to the defaults.
+      - name: Read compiler settings
+        id: cfg
+        run: |
+          texlive=latest
+          minutes=30
+          if [ -f prism-compiler.json ]; then
+            t="$(jq -r '.texlive // empty' prism-compiler.json 2>/dev/null || true)"
+            m="$(jq -r '.timeoutMinutes // empty' prism-compiler.json 2>/dev/null || true)"
+            if [[ "$t" =~ ^(latest|20(1[3-9]|2[0-9]))$ ]]; then texlive="$t"
+            elif [ -n "$t" ]; then echo "::warning::Ignoring an invalid texlive value in prism-compiler.json; using latest"; fi
+            if [[ "$m" =~ ^[0-9]+$ ]] && [ "$m" -ge 1 ] && [ "$m" -le 40 ]; then minutes="$m"
+            elif [ -n "$m" ]; then echo "::warning::Ignoring an invalid timeoutMinutes in prism-compiler.json; using 30"; fi
+          fi
+          if [ "$texlive" = latest ]; then image="texlive/texlive:latest"; else image="texlive/texlive:TL${texlive}-historic"; fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "seconds=$((minutes * 60))" >> "$GITHUB_OUTPUT"
+          echo "TeX Live image: $image; time limit: $minutes minutes"
+
       # The project's TeX code is untrusted input: run it with no network, no privileges and no job secrets.
       - name: Compile in TeX Live container
         env:
           PROJECT: ${{ inputs.project }}
+          TEXLIVE_IMAGE: ${{ steps.cfg.outputs.image }}
+          TIME_LIMIT_SECONDS: ${{ steps.cfg.outputs.seconds }}
         run: |
           # max_print_line etc.: unwrapped log lines, so file:line errors are not split across lines.
           docker run --rm \
             --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 1024 --memory 6g \
             --user "$(id -u):$(id -g)" -e HOME=/tmp/home \
-            -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e COMPILE_TIMEOUT_SECONDS=1800 \
+            -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e TEXLIVE_IMAGE -e COMPILE_TIMEOUT_SECONDS="$TIME_LIMIT_SECONDS" \
             -e max_print_line=10000 -e error_line=254 -e half_error_line=238 \
             -v "$GITHUB_WORKSPACE:/work" -w /work "$TEXLIVE_IMAGE" bash -c '
               mkdir -p "$HOME/.config/fontconfig"

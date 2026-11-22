@@ -20,6 +20,10 @@ import { diffLines } from './diff';
 import { citeKeysIn, completionSource, labelsIn } from './complete';
 import { SETUP_FILES, setupStatus } from './setup';
 import { TEMPLATES, templateById } from './templates';
+import {
+  COMPILER_FILE, CompilerConfig, defaultCompilerConfig, isTexliveChoice, MAX_TIMEOUT_MINUTES, parseCompilerConfig, serializeCompilerConfig,
+  TEXLIVE_YEARS, texliveFromLog, validLatexmkArgs,
+} from './compiler';
 import { guessEngine, MAX_ZIP_BYTES, nameFromFile, pickMainFile, readZip, timeAgo, uniqueName } from './projects';
 import { WrongPassphrase } from './vault';
 import {
@@ -57,6 +61,8 @@ const open = new Map<string, OpenFile>();
 const expanded = new Set<string>();
 let compileSeq = 0;
 let compiling = false;
+let currentRunId: number | null = null;
+let authProblem = false;
 let lastBuild: Build | null = null;
 let previewUrl: string | null = null;
 let sideTab: 'files' | 'outline' | 'search' = 'files';
@@ -107,6 +113,9 @@ function setEnabled() {
   $('pdf-empty').hidden = pdf.hasDocument || $('pdf').hidden;
   ($('compile') as HTMLButtonElement).disabled = !hasProject;
   ($('download-pdf') as HTMLButtonElement).disabled = !lastBuild?.pdf;
+  $('compile').querySelector('.label')!.textContent = compiling ? 'Stop' : 'Compile';
+  $('compile').title = compiling ? 'Stop waiting and cancel this compile' : 'Save and compile (Ctrl+Enter)';
+  $('compile').classList.toggle('danger-solid', compiling);
   ($('forward') as HTMLButtonElement).disabled = !(lastBuild?.pdf && current && !view.dom.hidden);
   ($('history') as HTMLButtonElement).disabled = !(current && ws?.files.has(current));
   if (!current) {
@@ -165,6 +174,8 @@ async function restoreDrafts() {
 async function connect(s: store.Settings) {
   settings = s;
   gh = new GitHub(s.token, s.owner, s.repo);
+  authProblem = false;
+  gh.onUnauthorized = () => { authProblem = true; renderBanner(); };
   ws = new Workspace(gh, s.branch);
   index = new ProjectIndex(ws);
   open.clear();
@@ -186,6 +197,7 @@ async function connect(s: store.Settings) {
   }
   const restored = await restoreDrafts();
   await loadManifest();
+  await loadCompilerConfig();
   const last = store.lastProject(s);
   lastOpenedName = manifest.some((m) => m.Project === last) ? last : null;
   await selectProject(null);
@@ -254,6 +266,7 @@ function showHome() {
   if (!ws) return;
   flushEdits();
   setMode('home');
+  document.title = 'Prism';
   renderHome();
   void refreshEdited();
   setEnabled();
@@ -488,6 +501,7 @@ async function selectProject(name: string | null) {
   renderLog();
   closeEditor();
   $('build-info').replaceChildren();
+  document.title = project ? `${project.Project} — Prism` : 'Prism';
   if (!project) { renderTree(); renderOutline(); setEnabled(); return; }
   $<HTMLSelectElement>('project').value = project.Project;
   if (settings) store.setLastProject(settings, project.Project);
@@ -981,6 +995,7 @@ async function refresh() {
 async function afterRemoteChange() {
   const name = project?.Project ?? null;
   await loadManifest();
+  await loadCompilerConfig();
   project = manifest.find((m) => m.Project === name) ?? null;
   if (current && (!ws!.exists(current) || !open.has(current))) {
     const p = current;
@@ -1002,13 +1017,16 @@ async function runCompile() {
   const name = project.Project;
   const started = Date.now();
   compiling = true;
+  currentRunId = null;
+  setEnabled(); // the Compile button becomes Stop
   let phaseText = 'Starting compile…';
   setStatus(phaseText, 'busy');
   const tick = window.setInterval(() => {
     if (token === compileSeq) setStatus(`${phaseText} ${Math.round((Date.now() - started) / 1000)}s`, 'busy');
   }, 1000);
   try {
-    const build = await compile(gh, settings.branch, name, (p) => {
+    const build = await compile(gh, settings.branch, name, (p, run) => {
+      if (run && token === compileSeq) currentRunId = run.id;
       phaseText = p === 'queued' ? 'Waiting for a GitHub runner…' : p === 'in_progress' ? 'Compiling…' : p === 'fetching' ? 'Loading PDF…' : 'Starting compile…';
     }, () => token === compileSeq);
     if (token !== compileSeq || project?.Project !== name) return;
@@ -1024,7 +1042,21 @@ async function runCompile() {
     else setStatus(errorText(e), 'error');
   } finally {
     clearInterval(tick);
-    if (token === compileSeq) compiling = false;
+    if (token === compileSeq) { compiling = false; currentRunId = null; setEnabled(); }
+  }
+}
+
+/** Stops waiting for the running compile and asks GitHub to cancel it. */
+async function stopCompile() {
+  if (!compiling) return;
+  compileSeq++; // the waiting loop notices and ends
+  compiling = false;
+  const id = currentRunId;
+  currentRunId = null;
+  setEnabled();
+  setStatus('Compile stopped.');
+  if (gh && id) {
+    try { await gh.cancelRun(id); } catch (e) { console.error('Could not cancel the run', e); } // already finished, or no permission: harmless
   }
 }
 
@@ -1056,7 +1088,9 @@ function renderBuildInfo() {
   badge.className = 'badge';
   badge.textContent = label;
   const pages = pdf.pageInfo ? ` · ${pdf.pageInfo}` : '';
-  el.replaceChildren(badge, `${r.engine} · ${r.duration_seconds}s · ${when}${pages}${stale}`);
+  const tl = texliveFromLog(b.log);
+  el.replaceChildren(badge, `${r.engine}${tl ? ` · TeX Live ${tl}` : ''} · ${r.duration_seconds}s · ${when}${pages}${stale}`);
+  el.title = r.command ? `${r.command}${r.image ? `\nImage: ${r.image}` : ''}` : '';
   el.dataset.kind = r.status;
 }
 
@@ -1089,6 +1123,7 @@ function renderLog() {
 function showOutput(which: 'pdf' | 'log') {
   $('pdf').hidden = which !== 'pdf';
   $('log').hidden = which !== 'log';
+  $('page-nav').hidden = which !== 'pdf' || !pdf.hasDocument;
   $('show-pdf').setAttribute('aria-pressed', String(which === 'pdf'));
   $('show-log').setAttribute('aria-pressed', String(which === 'log'));
   setEnabled();
@@ -1290,7 +1325,7 @@ function newFile() {
   void openFile(path);
 }
 
-async function upload(files: FileList) {
+async function upload(files: ArrayLike<File>) {
   const dir = targetDir();
   for (const file of Array.from(files)) {
     if (file.size > MAX_UPLOAD) { alert(`${file.name} is larger than ${formatBytes(MAX_UPLOAD)} and cannot be stored in GitHub this way.`); continue; }
@@ -1397,7 +1432,8 @@ async function checkSetup() {
 let setupBanner: string | null = null;
 function renderBanner() {
   const ex = settings ? expiryState(settings.expires) : null;
-  if (ex) showBanner(ex.text, 'Update token', () => openSettings(), ex.level === 'expired' ? 'error' : 'warn');
+  if (authProblem) showBanner('GitHub no longer accepts your token (it expired or was revoked). Your edits are kept in this browser. Enter a new token to continue.', 'Update token', () => openSettings(), 'error');
+  else if (ex) showBanner(ex.text, 'Update token', () => openSettings(), ex.level === 'expired' ? 'error' : 'warn');
   else if (setupBanner) showBanner(setupBanner, 'Set up', () => openSetup());
   else hideBanner();
 }
@@ -1583,6 +1619,8 @@ function applyTemplateToDialog() {
   $<HTMLSelectElement>('p-engine').value = t.engine;
   $<HTMLInputElement>('p-rc').checked = !!t.latexmkrc;
   $<HTMLInputElement>('p-shell').checked = !!t.shellEscape;
+  $<HTMLInputElement>('p-clean').checked = false;
+  $<HTMLInputElement>('p-args').value = '';
 }
 
 function openProjectDialog(mode: ProjectDialogMode, targetName?: string) {
@@ -1615,6 +1653,8 @@ function openProjectDialog(mode: ProjectDialogMode, targetName?: string) {
     $<HTMLSelectElement>('p-engine').value = (project.Engine ?? 'pdflatex').toLowerCase();
     $<HTMLInputElement>('p-rc').checked = !!project.UseLatexmkrc;
     $<HTMLInputElement>('p-shell').checked = !!project.ShellEscape;
+    $<HTMLInputElement>('p-clean').checked = !!project.CleanBuild;
+    $<HTMLInputElement>('p-args').value = typeof project.LatexmkArgs === 'string' ? project.LatexmkArgs : '';
     const root = projectRoot() + '/';
     const texFiles = ws!.paths().filter((p) => p.startsWith(root) && p.toLowerCase().endsWith('.tex'));
     $<HTMLSelectElement>('p-main').replaceChildren(...texFiles.map((p) => new Option(relative(p), p, false, p === mainPath())));
@@ -1629,8 +1669,14 @@ function submitProjectDialog() {
   const engine = $<HTMLSelectElement>('p-engine').value;
   const shell = $<HTMLInputElement>('p-shell').checked;
   const rc = $<HTMLInputElement>('p-rc').checked;
+  const clean = $<HTMLInputElement>('p-clean').checked;
+  const args = $<HTMLInputElement>('p-args').value.trim().replace(/\s+/g, ' ');
   const close = () => $<HTMLDialogElement>('project-dialog').close();
   if (!ws) return;
+  if ((projectDialogMode === 'edit' || projectDialogMode === 'new') && !validLatexmkArgs(args)) {
+    err.textContent = 'Extra options may only contain letters, digits, spaces and _ = . , : + / @ % - (at most 300 characters).';
+    return;
+  }
 
   if (projectDialogMode === 'edit') {
     if (!project) return;
@@ -1638,6 +1684,8 @@ function submitProjectDialog() {
     project.Engine = engine;
     if (shell) project.ShellEscape = true; else delete project.ShellEscape;
     if (rc) project.UseLatexmkrc = true; else delete project.UseLatexmkrc;
+    if (clean) project.CleanBuild = true; else delete project.CleanBuild;
+    if (args) project.LatexmkArgs = args; else delete project.LatexmkArgs;
     writeManifest();
     close();
     renderTree();
@@ -1658,6 +1706,7 @@ function submitProjectDialog() {
     manifest.push({
       Project: name, MainFile: `${name}/main.tex`, Engine: engine, Bibliography: tpl.bibliography, MissingBibliography: [], Status: 'New', Detail: `Created from the "${tpl.name}" template.`,
       ...(shell ? { ShellEscape: true } : {}), ...(rc ? { UseLatexmkrc: true } : {}),
+      ...(clean ? { CleanBuild: true } : {}), ...(args ? { LatexmkArgs: args } : {}),
     });
     writeManifest();
     persistDrafts();
@@ -1674,8 +1723,108 @@ function submitProjectDialog() {
   }
 }
 
+// ---------- Compiler settings (whole repository) ----------
+
+let compilerConfig: CompilerConfig = { ...defaultCompilerConfig };
+
+async function loadCompilerConfig() {
+  if (!ws) return;
+  try {
+    compilerConfig = parseCompilerConfig(ws.exists(COMPILER_FILE) ? decodeText(await ws.read(COMPILER_FILE)) : null);
+  } catch { compilerConfig = { ...defaultCompilerConfig }; }
+}
+
+function describeTexlive(v: string): string {
+  return v === 'latest'
+    ? 'Always the newest TeX Live. New packages, but a document may change when a new year is released.'
+    : `TeX Live ${v} exactly as it was in ${v}: the same document compiles the same way every time. The first compile with a new version downloads about 2–3 GB, which adds roughly a minute once.`;
+}
+
+function openCompilerDialog() {
+  if (!ws) return;
+  const sel = $<HTMLSelectElement>('c-texlive');
+  sel.replaceChildren(new Option('Latest', 'latest'), ...TEXLIVE_YEARS.map((y) => new Option(`TeX Live ${y} (frozen)`, y)));
+  sel.value = compilerConfig.texlive;
+  $<HTMLInputElement>('c-timeout').value = String(compilerConfig.timeoutMinutes);
+  $('c-texlive-hint').textContent = describeTexlive(compilerConfig.texlive);
+  const used = lastBuild ? texliveFromLog(lastBuild.log) : null;
+  $('c-last').textContent = used ? `The last build of the open project used TeX Live ${used}.` : '';
+  $('c-error').textContent = '';
+  const dlg = $<HTMLDialogElement>('compiler-dialog');
+  if (!dlg.open) dlg.showModal();
+}
+
+function applyCompilerDialog() {
+  if (!ws) return;
+  const texlive = $<HTMLSelectElement>('c-texlive').value;
+  const minutes = Number($<HTMLInputElement>('c-timeout').value);
+  if (!isTexliveChoice(texlive)) { $('c-error').textContent = 'Choose a TeX Live version from the list.'; return; }
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_TIMEOUT_MINUTES) { $('c-error').textContent = `The time limit must be a whole number of minutes from 1 to ${MAX_TIMEOUT_MINUTES}.`; return; }
+  const next: CompilerConfig = { texlive, timeoutMinutes: minutes };
+  const changed = next.texlive !== compilerConfig.texlive || next.timeoutMinutes !== compilerConfig.timeoutMinutes;
+  compilerConfig = next;
+  if (changed || ws.exists(COMPILER_FILE)) ws.put(COMPILER_FILE, encodeText(serializeCompilerConfig(next)));
+  persistDrafts();
+  setEnabled();
+  $<HTMLDialogElement>('compiler-dialog').close();
+  setStatus(changed ? `Compiler set to ${next.texlive === 'latest' ? 'the latest TeX Live' : `TeX Live ${next.texlive}`}, ${next.timeoutMinutes} min limit. Save or Compile to apply.` : 'Compiler settings unchanged.');
+}
+
+// ---------- Robustness: unexpected errors, connection state ----------
+
+function reportUnexpected(reason: unknown) {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  // Browser noise that is not a problem: resize loops, cancelled PDF renders, aborted navigations.
+  if (/ResizeObserver loop|RenderingCancelled|Worker was destroyed|AbortError|Transport destroyed/i.test(msg) || (reason instanceof Error && /RenderingCancelled|AbortException/.test(reason.name))) return;
+  console.error('Unexpected error', reason);
+  setStatus(`Something unexpected went wrong: ${msg.slice(0, 160)}. Your edits are still in this browser; Save, then reload the page if it keeps happening.`, 'error');
+}
+window.addEventListener('error', (e) => reportUnexpected(e.error ?? e.message));
+window.addEventListener('unhandledrejection', (e) => reportUnexpected(e.reason));
+window.addEventListener('offline', () => setStatus('You are offline. Editing still works; Save, Compile and Refresh need a connection.', 'error'));
+window.addEventListener('online', () => setStatus('Back online.'));
+
 // ---------- Wiring ----------
 
+$('help').addEventListener('click', () => { $('app-version').textContent = `v${__APP_VERSION__}`; $<HTMLDialogElement>('help-dialog').showModal(); });
+$('help-close').addEventListener('click', () => $<HTMLDialogElement>('help-dialog').close());
+
+// PDF page navigation
+pdf.onPage = (page, total) => {
+  const input = $<HTMLInputElement>('pdf-page');
+  $('page-nav').hidden = !total || $('pdf').hidden;
+  $('pdf-total').textContent = String(total);
+  input.max = String(total);
+  if (document.activeElement !== input) input.value = page ? String(page) : '';
+};
+$('pdf-page').addEventListener('change', () => { const n = Number($<HTMLInputElement>('pdf-page').value); if (Number.isFinite(n) && n >= 1) pdf.goToPage(n); });
+
+// Drop files onto the file list to upload them; drop a ZIP on the start screen to import a project.
+function enableDrop(el: HTMLElement, handle: (files: File[]) => void, accept: () => boolean) {
+  let depth = 0;
+  el.addEventListener('dragenter', (e) => { if (accept() && e.dataTransfer?.types.includes('Files')) { depth++; el.classList.add('dropping'); e.preventDefault(); } });
+  el.addEventListener('dragover', (e) => { if (accept() && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
+  el.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) el.classList.remove('dropping'); });
+  el.addEventListener('drop', (e) => {
+    depth = 0;
+    el.classList.remove('dropping');
+    if (!accept() || !e.dataTransfer?.files.length) return;
+    e.preventDefault();
+    handle([...e.dataTransfer.files]);
+  });
+}
+enableDrop(document.querySelector<HTMLElement>('.panel.files')!, (files) => void upload(files), () => !!ws && !!project && sideTab === 'files');
+enableDrop($('home'), (files) => {
+  const zips = files.filter((f) => /\.zip$/i.test(f.name));
+  if (!zips.length) { setStatus('Drop a .zip file to import a project.', 'error'); return; }
+  for (const z of zips) void uploadProjectZip(z);
+}, () => !!ws);
+
+$('home-compiler').addEventListener('click', openCompilerDialog);
+$('p-open-compiler').addEventListener('click', () => { $<HTMLDialogElement>('project-dialog').close(); openCompilerDialog(); });
+$('c-cancel').addEventListener('click', () => $<HTMLDialogElement>('compiler-dialog').close());
+$('c-ok').addEventListener('click', applyCompilerDialog);
+$('c-texlive').addEventListener('change', () => { $('c-texlive-hint').textContent = describeTexlive($<HTMLSelectElement>('c-texlive').value); });
 $('brand').addEventListener('click', showHome);
 $('home-btn').addEventListener('click', showHome);
 $('home-new').addEventListener('click', () => openProjectDialog('new'));
@@ -1788,7 +1937,7 @@ $<HTMLSelectElement>('project').addEventListener('change', (e) => void selectPro
 $('new-project').addEventListener('click', () => openProjectDialog('new'));
 $('project-settings').addEventListener('click', () => openProjectDialog('edit'));
 $('save').addEventListener('click', () => void save());
-$('compile').addEventListener('click', () => void runCompile());
+$('compile').addEventListener('click', () => void (compiling ? stopCompile() : runCompile()));
 $('forward').addEventListener('click', () => void forwardSearch());
 $('history').addEventListener('click', () => void openHistory());
 $('new-file').addEventListener('click', newFile);

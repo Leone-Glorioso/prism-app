@@ -36,6 +36,9 @@ export class PdfView {
   pageInfo = '';
   jumpMode: JumpMode = 'double';
   onChange: () => void = () => {};
+  /** Called with the page in view (1-based) and the page count; (0, 0) when there is no document. */
+  onPage: (page: number, total: number) => void = () => {};
+  private shownPage = 0;
   /** Called for a double click (or Ctrl+click) on a page. */
   onJump: (p: PdfPoint) => void = () => {};
 
@@ -53,12 +56,41 @@ export class PdfView {
       clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => { if (this.zoom === 0) this.layout(); }, 150);
     }).observe(scroller);
+    let raf = 0;
+    scroller.addEventListener('scroll', () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; this.updatePage(); });
+    }, { passive: true });
     scroller.addEventListener('dblclick', (e) => { if (this.jumpMode === 'double') this.jumpFrom(e); });
     scroller.addEventListener('click', (e) => { if (this.jumpMode === 'ctrl' && (e.ctrlKey || e.metaKey)) this.jumpFrom(e); });
   }
 
   get hasDocument() {
     return this.doc !== null;
+  }
+
+  /** The page that is at about a third of the way down the visible area (1-based), or 0. */
+  currentPage(): number {
+    if (!this.pages.length) return 0;
+    const line = this.scroller.scrollTop + this.scroller.clientHeight * 0.3;
+    let page = 1;
+    for (let i = 0; i < this.pages.length; i++) { if (this.pages[i].el.offsetTop <= line) page = i + 1; else break; }
+    return page;
+  }
+
+  private updatePage() {
+    const p = this.currentPage();
+    if (p !== this.shownPage) { this.shownPage = p; this.onPage(p, this.pages.length); }
+  }
+
+  goToPage(n: number) {
+    const slot = this.pages[Math.min(Math.max(1, Math.round(n)), this.pages.length) - 1];
+    if (slot) this.scroller.scrollTo({ top: Math.max(0, slot.el.offsetTop - 8), behavior: this.behaviorFor(Math.max(0, slot.el.offsetTop - 8)) });
+  }
+
+  /** Short moves scroll smoothly; far jumps are instant (a smooth scroll across 100 pages takes seconds). */
+  private behaviorFor(top: number): ScrollBehavior {
+    return Math.abs(top - this.scroller.scrollTop) > this.scroller.clientHeight * 3 ? 'auto' : 'smooth';
   }
 
   /** CSS pixels per bp. */
@@ -93,6 +125,8 @@ export class PdfView {
     this.layout();
     this.scroller.scrollTop = fraction * this.scroller.scrollHeight;
     for (const p of this.pages) this.observer.observe(p.el);
+    this.shownPage = -1;
+    this.updatePage();
   }
 
   clear() {
@@ -105,6 +139,8 @@ export class PdfView {
     this.doc = null;
     this.hit = null;
     this.pageInfo = '';
+    this.shownPage = 0;
+    this.onPage(0, 0);
     this.onChange();
   }
 
@@ -123,7 +159,7 @@ export class PdfView {
     if (!slot) return;
     const s = this.scale();
     const focus = rects.length ? rects[0].y + rects[0].h / 2 : y;
-    this.scroller.scrollTo({ top: Math.max(0, slot.el.offsetTop + focus * s - this.scroller.clientHeight / 3), behavior: 'smooth' });
+    this.scroller.scrollTo({ top: Math.max(0, slot.el.offsetTop + focus * s - this.scroller.clientHeight / 3), behavior: this.behaviorFor(Math.max(0, slot.el.offsetTop + focus * s - this.scroller.clientHeight / 3)) });
     if (rects.length) this.flash(page, rects);
   }
 
@@ -269,7 +305,7 @@ export class PdfView {
       const slot = this.pages[index];
       if (!slot) return;
       const y = typeof top === 'number' ? slot.height - top : 0;
-      this.scroller.scrollTo({ top: Math.max(0, slot.el.offsetTop + y * this.scale() - 16), behavior: 'smooth' });
+      this.scroller.scrollTo({ top: Math.max(0, slot.el.offsetTop + y * this.scale() - 16), behavior: this.behaviorFor(Math.max(0, slot.el.offsetTop + y * this.scale() - 16)) });
     } catch (e) {
       console.error('PDF link failed', e);
     }

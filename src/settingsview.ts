@@ -6,7 +6,7 @@ import { ACTIONS, comboOf, conflictFor, defaultShortcuts, formatCombo, validateC
 import type { ActionId, ShortcutMap } from './shortcuts';
 import { imageToAvatar, paintAvatar } from './profile';
 import type { Profile } from './account';
-import type { CloudUser } from './cloud';
+import type { CloudUser, Provider } from './cloud';
 import type { Mode } from './storage';
 import { el } from './authui';
 
@@ -21,6 +21,7 @@ export interface AccountApi {
   hasPlain(): boolean;
   connected(): boolean;
   signIn(): void;
+  link(provider: Provider): Promise<void>;
   signOut(): Promise<void>;
   saveConnection(): void;
   removeConnection(): void;
@@ -224,6 +225,18 @@ export function initSettingsView(ctx: SettingsCtx) {
       el('p', {}, el('span', { class: 'status-pill' }, 'Signed in')),
       el('div', { class: 'card-note' }, el('p', {}, el('strong', {}, user.email ?? user.name ?? 'Your account')), el('p', {}, `Sign-in methods: ${how}`)),
     );
+    // linking
+    const missing = (['google', 'github'] as Provider[]).filter((p) => !user.providers.includes(p));
+    if (missing.length) {
+      const linkMsg = el('p', { class: 'msg error', role: 'alert' });
+      const row = el('div', { class: 'btn-row' });
+      for (const p of missing) {
+        const b = el('button', { type: 'button', class: 'btn sm' }, `Link ${p === 'google' ? 'Google' : 'GitHub'}`);
+        b.addEventListener('click', async () => { b.disabled = true; try { await api.link(p); } catch (e) { linkMsg.textContent = e instanceof Error ? e.message : String(e); b.disabled = false; } });
+        row.append(b);
+      }
+      body.append(el('p', { class: 'hint' }, 'Link another sign-in method so either one opens this same account.'), row, linkMsg);
+    }
     // sync
     const sync = el('p', { class: 'hint' }, api.syncError() ? `Last sync problem: ${api.syncError()}` : 'Settings, shortcuts and profile are synced automatically.');
     const syncBtn = el('button', { type: 'button', class: 'btn sm' }, 'Sync now');

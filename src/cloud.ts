@@ -185,6 +185,16 @@ export class Cloud {
     return `${this.cfg.url}/auth/v1/authorize?${q}`;
   }
 
+  /** Address for linking another sign-in method (Google or GitHub) to the signed-in account. Needs "manual linking" switched on at the service. */
+  async linkUrl(provider: Provider): Promise<string> {
+    const p = await this.pkceParams('login');
+    const q = new URLSearchParams({ provider, redirect_to: this.redirectTo, skip_http_redirect: 'true', code_challenge: p.code_challenge, code_challenge_method: p.code_challenge_method });
+    const { body } = await this.call(`/auth/v1/user/identities/authorize?${q}`, { bearer: await this.accessToken() });
+    const url = (body as { url?: unknown } | null)?.url;
+    if (typeof url !== 'string' || !url.startsWith(this.cfg.url + '/')) throw new CloudError('The service did not return a valid link address.');
+    return url;
+  }
+
   async recover(email: string): Promise<void> {
     await this.call(`/auth/v1/recover?redirect_to=${encodeURIComponent(this.redirectTo)}`, { body: { email, ...(await this.pkceParams('recovery')) } });
   }

@@ -2098,6 +2098,7 @@ const settingsView = initSettingsView({
     hasPlain: () => !!sync?.plain,
     connected: () => !!settings,
     signIn: () => openAuthDialog(),
+    link: async (p) => { location.assign(await cloud!.linkUrl(p)); },
     signOut: () => signOutNow(),
     saveConnection: () => openVaultDialog(),
     removeConnection: () => void removeVault(),

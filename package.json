@@ -1,0 +1,27 @@
+{
+  "name": "prism-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@codemirror/language": "^6.10.8",
+    "@codemirror/legacy-modes": "^6.4.2",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/theme-one-dark": "^6.1.2",
+    "@codemirror/view": "^6.36.2",
+    "codemirror": "^6.0.1",
+    "fflate": "^0.8.2",
+    "pdfjs-dist": "4.10.38"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.3",
+    "vite": "~5.4.21",
+    "vitest": "~2.1.9"
+  }
+}

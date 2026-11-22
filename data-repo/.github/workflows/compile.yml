@@ -1,0 +1,70 @@
+name: compile
+run-name: "compile ${{ inputs.project }} [${{ inputs.request }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Project name exactly as in prism-projects.json
+        required: true
+        type: string
+      request:
+        description: Request id set by the web app to find this run (any text)
+        required: false
+        type: string
+        default: manual
+
+# One compile per project at a time; a newer request for the same project replaces an older one.
+concurrency:
+  group: compile-${{ inputs.project }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  # Full TeX Live (pdfLaTeX, XeLaTeX, LuaLaTeX, BibTeX, Biber, latexmk).
+  # shortcut: tracks the latest TeX Live; pin to a TLyyyy-historic tag once a year's output is accepted.
+  TEXLIVE_IMAGE: texlive/texlive:latest
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile in TeX Live container
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: |
+          # max_print_line etc.: unwrapped log lines, so file:line errors are not split across lines.
+          docker run --rm -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e COMPILE_TIMEOUT_SECONDS=1800 \
+            -e max_print_line=10000 -e error_line=254 -e half_error_line=238 \
+            -v "$GITHUB_WORKSPACE:/work" -w /work "$TEXLIVE_IMAGE" bash -c '
+              # Let XeLaTeX/LuaLaTeX find TeX Live fonts by name (as MiKTeX does on Windows).
+              conf="$(kpsewhich -var-value TEXMFSYSVAR)/fonts/conf/texlive-fontconfig.conf"
+              if [ -f "$conf" ] && [ -d /etc/fonts/conf.d ] && command -v fc-cache >/dev/null; then
+                cp "$conf" /etc/fonts/conf.d/09-texlive.conf && fc-cache -fs >/dev/null 2>&1 || true
+              fi
+              bash .github/scripts/compile.sh "$PROJECT" /work/.prism-out
+              chmod -R a+rwX /work/.prism-out'
+
+      - name: Publish result to builds branch
+        env:
+          PROJECT: ${{ inputs.project }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id="$(printf '%s' "$PROJECT" | sha1sum | cut -c1-12)"
+          branch="builds/$id"
+          cd .prism-out
+          rm -f latexmk.txt
+          git init -q
+          git config user.name "prism-compile"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Build of $PROJECT at $GITHUB_SHA"
+          # Single commit per project, replaced on every build, so PDFs do not pile up in history.
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          echo "Published to $branch"
+          cat result.json

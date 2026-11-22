@@ -1,0 +1,15 @@
+# Local build folders and LaTeX intermediates. Source files and figures are never ignored.
+**/build/
+.prism-out/
+*.aux
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.xdv

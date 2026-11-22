@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- The GitHub token lives in this page's storage: allow no third-party code at all. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src https://api.github.com; worker-src 'self'; font-src 'self'; base-uri 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3 21 19H3Z'/%3E%3Cpath d='M12 3v16M3 19l9-6 9 6'/%3E%3C/svg%3E">
+  <title>Prism</title>
+</head>
+<body data-view="editor">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" data-icon="logo"></span><span>Prism</span></div>
+    <div class="project-picker">
+      <label class="sr-only" for="project">Project</label>
+      <select id="project" disabled></select>
+      <button id="project-settings" class="icon-btn" data-icon="sliders" title="Project settings" aria-label="Project settings" disabled></button>
+      <button id="new-project" class="icon-btn" data-icon="plus" title="New project" aria-label="New project" disabled></button>
+    </div>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div class="actions">
+      <button id="save" class="btn" data-icon="save" title="Save (Ctrl+S)" disabled><span class="label">Save</span></button>
+      <button id="compile" class="btn primary" data-icon="play" title="Save and compile (Ctrl+Enter)" disabled><span class="label">Compile</span></button>
+      <button id="settings" class="icon-btn" data-icon="settings" title="Connection settings" aria-label="Connection settings"></button>
+    </div>
+  </header>
+
+  <nav class="view-tabs" aria-label="Panels">
+    <button data-view="files" data-icon="folder">Files</button>
+    <button data-view="editor" data-icon="file">Editor</button>
+    <button data-view="output" data-icon="pdf">PDF</button>
+  </nav>
+
+  <main class="layout" id="layout">
+    <aside class="panel files" aria-label="Files">
+      <div class="panel-head">
+        <span class="panel-label">Files</span>
+        <div class="tools">
+          <button id="new-file" class="icon-btn sm" data-icon="filePlus" title="New file" aria-label="New file" disabled></button>
+          <button id="upload-btn" class="icon-btn sm" data-icon="upload" title="Upload files" aria-label="Upload files" disabled></button>
+          <button id="rename" class="icon-btn sm" data-icon="pencil" title="Rename or move" aria-label="Rename or move" disabled></button>
+          <button id="delete" class="icon-btn sm" data-icon="trash" title="Delete" aria-label="Delete" disabled></button>
+          <button id="download" class="icon-btn sm" data-icon="download" title="Download file" aria-label="Download file" disabled></button>
+          <button id="zip" class="icon-btn sm" data-icon="archive" title="Download project as ZIP" aria-label="Download project as ZIP" disabled></button>
+          <button id="refresh" class="icon-btn sm" data-icon="refresh" title="Load changes pushed from elsewhere" aria-label="Refresh" disabled></button>
+        </div>
+      </div>
+      <div id="tree" class="tree"></div>
+      <input type="file" id="upload" multiple hidden>
+    </aside>
+
+    <div class="gutter" data-gutter="files" role="separator" aria-orientation="vertical" aria-label="Resize file panel" tabindex="0"></div>
+
+    <section class="panel editor" aria-label="Editor">
+      <div class="panel-head">
+        <span class="panel-label" id="editor-title">Editor</span>
+        <span class="kbd-hint"><kbd>Ctrl</kbd> <kbd>S</kbd> save · <kbd>Ctrl</kbd> <kbd>Enter</kbd> compile</span>
+      </div>
+      <div id="editor" class="editor-host"></div>
+      <div id="preview" class="preview" hidden></div>
+      <div id="editor-empty" class="empty">
+        <div class="empty-icon" data-icon="file"></div>
+        <p class="empty-title">No file open</p>
+        <p>Choose a file from the list on the left.</p>
+      </div>
+    </section>
+
+    <div class="gutter" data-gutter="output" role="separator" aria-orientation="vertical" aria-label="Resize PDF panel" tabindex="0"></div>
+
+    <section class="panel output" aria-label="PDF and log">
+      <div class="panel-head">
+        <div class="segmented" role="group" aria-label="Output">
+          <button id="show-pdf" data-icon="pdf" aria-pressed="true">PDF</button>
+          <button id="show-log" data-icon="log" aria-pressed="false"><span class="label">Log</span></button>
+        </div>
+        <div class="tools">
+          <button id="zoom-out" class="icon-btn sm" data-icon="zoomOut" title="Zoom out" aria-label="Zoom out"></button>
+          <button id="zoom-fit" class="icon-btn sm" data-icon="fit" title="Fit width" aria-label="Fit width"></button>
+          <button id="zoom-in" class="icon-btn sm" data-icon="zoomIn" title="Zoom in" aria-label="Zoom in"></button>
+          <button id="download-pdf" class="icon-btn sm" data-icon="download" title="Download PDF" aria-label="Download PDF" disabled></button>
+        </div>
+      </div>
+      <div id="build-info" class="build-info"></div>
+      <div id="pdf" class="pdf"></div>
+      <div id="pdf-empty" class="empty">
+        <div class="empty-icon" data-icon="pdf"></div>
+        <p class="empty-title">No PDF yet</p>
+        <p>Press <strong>Compile</strong> to build this project with full TeX Live.</p>
+      </div>
+      <div id="log" class="log" hidden>
+        <ul id="issues" class="issues"></ul>
+        <pre id="log-text"></pre>
+      </div>
+    </section>
+
+    <div id="welcome" class="welcome" hidden>
+      <div class="welcome-card">
+        <div class="welcome-mark" data-icon="logo"></div>
+        <h1>Your LaTeX projects, online</h1>
+        <p>Edit in the browser, compile with full TeX Live (pdfLaTeX, XeLaTeX, LuaLaTeX, BibTeX, Biber) and read the PDF next to your source.</p>
+        <ul class="welcome-points">
+          <li data-icon="lock"><span>Files stay in your <strong>private</strong> GitHub repository, with full history.</span></li>
+          <li data-icon="play"><span>Compiles run in GitHub Actions with full TeX Live — no page or package limits.</span></li>
+          <li data-icon="refresh"><span>Codex, Claude and your other devices work on the same files.</span></li>
+        </ul>
+        <button id="welcome-connect" class="btn primary lg">Connect repository</button>
+      </div>
+    </div>
+  </main>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <h2 id="settings-title">Connect your projects repository</h2>
+    <p class="hint">Your files live in a <strong>private</strong> GitHub repository. The token is stored only in this browser.</p>
+    <div class="form-grid">
+      <label>Owner<input id="s-owner" autocomplete="off" spellcheck="false" placeholder="GitHub user or organisation"></label>
+      <label>Repository<input id="s-repo" autocomplete="off" spellcheck="false" placeholder="prism-data"></label>
+      <label>Branch<input id="s-branch" autocomplete="off" spellcheck="false" value="main"></label>
+      <label class="wide">Fine-grained personal access token<input id="s-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+    </div>
+    <p class="hint">Create it under GitHub → Settings → Developer settings → Fine-grained tokens. Repository access: only this repository. Permissions: <strong>Contents</strong> and <strong>Actions</strong>, read and write.</p>
+    <p id="s-error" class="error" role="alert"></p>
+    <div class="dialog-buttons">
+      <button id="s-forget" class="btn danger">Forget token</button>
+      <span class="sep"></span>
+      <button id="s-cancel" class="btn">Cancel</button>
+      <button id="s-save" class="btn primary">Connect</button>
+    </div>
+  </dialog>
+
+  <dialog id="project-dialog" aria-labelledby="p-title">
+    <h2 id="p-title">Project</h2>
+    <label id="p-name-label">Project name (also its folder name)<input id="p-name" autocomplete="off"></label>
+    <label id="p-main-label">Main file<select id="p-main"></select></label>
+    <label>Engine
+      <select id="p-engine">
+        <option value="pdflatex">pdfLaTeX</option>
+        <option value="xelatex">XeLaTeX</option>
+        <option value="lualatex">LuaLaTeX</option>
+      </select>
+    </label>
+    <p class="hint">BibTeX or Biber is chosen automatically by latexmk.</p>
+    <p id="p-error" class="error" role="alert"></p>
+    <div class="dialog-buttons">
+      <span class="sep"></span>
+      <button id="p-cancel" class="btn">Cancel</button>
+      <button id="p-ok" class="btn primary">OK</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

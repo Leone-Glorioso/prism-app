@@ -54,20 +54,43 @@ jobs:
           echo "TeX Live image: $image; time limit: $minutes minutes"
 
       # The project's TeX code is untrusted input: run it with no network, no privileges and no job secrets.
+      # Speed: the full TeX Live image takes about 90 seconds to download, the "medium" one about 15. With the
+      # default "latest" setting a project is tried on the medium image first; only when the log shows a missing
+      # package, class or font is it compiled again on the full image, and later builds of that project start with the
+      # full image. Frozen years always use the full image.
       - name: Compile in TeX Live container
         env:
           PROJECT: ${{ inputs.project }}
           TEXLIVE_IMAGE: ${{ steps.cfg.outputs.image }}
           TIME_LIMIT_SECONDS: ${{ steps.cfg.outputs.seconds }}
+          GH_TOKEN: ${{ github.token }} # used by this step only, never passed into the container
         run: |
-          # max_print_line etc.: unwrapped log lines, so file:line errors are not split across lines.
-          docker run --rm \
-            --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 1024 --memory 6g \
-            --user "$(id -u):$(id -g)" -e HOME=/tmp/home \
-            -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e TEXLIVE_IMAGE -e COMPILE_TIMEOUT_SECONDS="$TIME_LIMIT_SECONDS" \
-            -e max_print_line=10000 -e error_line=254 -e half_error_line=238 \
-            -v "$GITHUB_WORKSPACE:/work" -w /work "$TEXLIVE_IMAGE" \
-            bash .github/scripts/compile.sh "$PROJECT" /work/.prism-out
+          run_in() { # image, label written into result.json
+            rm -rf .prism-out
+            # max_print_line etc.: unwrapped log lines, so file:line errors are not split across lines.
+            docker run --rm \
+              --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 1024 --memory 6g \
+              --user "$(id -u):$(id -g)" -e HOME=/tmp/home \
+              -e PROJECT -e GITHUB_SHA -e GITHUB_RUN_ID -e TEXLIVE_IMAGE="${2:-$1}" -e COMPILE_TIMEOUT_SECONDS="$TIME_LIMIT_SECONDS" \
+              -e max_print_line=10000 -e error_line=254 -e half_error_line=238 \
+              -v "$GITHUB_WORKSPACE:/work" -w /work "$1" \
+              bash .github/scripts/compile.sh "$PROJECT" /work/.prism-out
+          }
+          missing='(File|file) .{0,100}\.(sty|cls|def|cfg|fd|tfm|bst|bbx|cbx|lbx|ldf|clo|pfb|otf|ttf|enc|map).{0,3} not found|I can.t find file .{0,100}\.(sty|cls|tfm|bst)|cannot be found|pygmentize|kpathsea: Running mktex|Package fontspec Error|No hyphenation patterns'
+          # A project that needed the full image last time goes straight to it.
+          id="$(printf '%s' "$PROJECT" | sha1sum | cut -c1-12)"
+          prev="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/result.json?ref=builds/$id" 2>/dev/null | jq -r '.image // empty' 2>/dev/null || true)"
+          if [ "$TEXLIVE_IMAGE" = "texlive/texlive:latest" ] && [ "$prev" != "texlive/texlive:latest+full" ]; then
+            run_in texlive/texlive:latest-medium
+            status="$(jq -r .status .prism-out/result.json 2>/dev/null || echo error)"
+            if [ "$status" = ok ] || ! grep -qE "$missing" .prism-out/output.log 2>/dev/null; then
+              echo "Compiled on the medium image (status: $status)"
+              exit 0
+            fi
+            echo "Something is missing on the medium image; compiling again on the full image"
+          fi
+          if [ "$TEXLIVE_IMAGE" = "texlive/texlive:latest" ]; then run_in "$TEXLIVE_IMAGE" "texlive/texlive:latest+full"; else run_in "$TEXLIVE_IMAGE"; fi
 
       - name: Publish result to builds branch
         env:

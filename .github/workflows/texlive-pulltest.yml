@@ -1,4 +1,4 @@
-name: texlive pull test
+name: texlive medium probe
 on: workflow_dispatch
 permissions:
   contents: read
@@ -6,9 +6,8 @@ jobs:
   t:
     runs-on: ubuntu-latest
     steps:
-      - name: Pull sizes
+      - name: Probe
         run: |
-          for tag in latest-small latest-medium; do
-            s=$(date +%s); docker pull -q texlive/texlive:$tag >/dev/null; echo "PULL $tag SECONDS: $(( $(date +%s) - s ))"
-          done
-          docker images texlive/texlive --format '{{.Tag}} {{.Size}}'
+          mkdir w && cd w
+          printf '\documentclass{article}\begin{document}hi\end{document}\n' > t.tex
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp/home -v "$PWD:/work" -w /work texlive/texlive:latest-medium bash -c 'echo "HOME=$HOME"; mkdir -p "$HOME"; which latexmk perl pdflatex biber; latexmk -pdf -interaction=nonstopmode t.tex; echo EXIT=$?; for f in fontspec.sty biblatex.sty polyglossia.sty xcolor.sty; do echo "$f: $(kpsewhich $f)"; done' 2>&1 | tail -30

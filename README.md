@@ -102,18 +102,21 @@ is plain requests to that one service address (the page's security policy allows
 2. *SQL Editor* → new query → paste [`supabase/setup.sql`](supabase/setup.sql) → Run. (Creates the table with row-level security, the
    delete-account function and a harmless `ping` function.)
 3. *Project Settings → API*: copy the **Project URL** and the **anon / publishable** key. **Never** use the `service_role` / secret key; the build refuses it.
-4. *Authentication → URL Configuration*: Site URL `https://prism-latex.github.io/prism-app/`; add the same address to *Redirect URLs*
+4. *Authentication → Sign In / Providers*: switch on **Allow manual linking** (needed for the "Link Google / Link GitHub" buttons). *Authentication → URL Configuration*: Site URL `https://prism-latex.github.io/prism-app/`; add the same address to *Redirect URLs*
    (and `http://localhost:5173/` if you develop locally).
 5. *Authentication → Providers*: **Email** on (keep "Confirm email" on). **GitHub**: on GitHub → Settings → Developer settings → OAuth Apps → *New*;
    homepage `https://prism-latex.github.io/prism-app/`, callback `https://<project-ref>.supabase.co/auth/v1/callback`; paste its Client ID and
-   secret into Supabase. **Google**: Google Cloud Console → APIs & Services → Credentials → *OAuth client ID* (Web application), authorised redirect
-   URI `https://<project-ref>.supabase.co/auth/v1/callback`; paste Client ID and secret into Supabase.
+   secret into Supabase. **Google**: Google Cloud Console → Google Auth Platform: fill *Branding* (app name, support email, home page, privacy policy link, authorised domains = your
+   `<project-ref>.supabase.co` and `prism-latex.github.io`), then *Clients → Create client* (Web application) with authorised redirect URI
+   `https://<project-ref>.supabase.co/auth/v1/callback`; paste Client ID and secret into Supabase; on *Audience* press **Publish app** (otherwise only listed test users can sign in).
 6. In this repository create `cloud.config.json` next to `package.json`:
    ```json
    { "url": "https://<project-ref>.supabase.co", "anonKey": "<the public key>" }
    ```
    Commit and push. The Pages workflow rebuilds; the settings page then shows accounts as available. Without this file the app is built
    without accounts and nothing else changes.
+
+Signing in and out: *Settings → Account → Link Google / Link GitHub* joins another sign-in method to the signed-in account (needed when the two addresses differ). *Sign out* removes the token, drafts and settings from this browser and returns to the start page; the account keeps them. Not signed in, the app always opens on the start (sign-in) page; signed in with a saved connection it goes straight to your projects.
 
 Notes: Google and GitHub sign-in link to the same account as an email sign-in when the verified address matches. The built-in Supabase
 email sender is rate-limited (a few messages an hour); add your own SMTP in Supabase for more. A weekly workflow

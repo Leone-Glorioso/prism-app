@@ -106,8 +106,8 @@ Compiles of one project cancel each other (newest wins).
   logic; path validation; SyncTeX; log parsing; completion (citations, slash commands, environments); shortcuts; the account client
   (sign-up, sign-in, PKCE exchange, token refresh, hostile server data, sealed connection, sync) against a simulated service.
 * Accounts were exercised in a real browser against a simulated account service (sign-up with confirmation, sign-in, Google/GitHub redirect with PKCE,
-  new-browser restore of settings and the sealed connection, wrong passphrase). They have **not** been run against a real Supabase project: do the
-  first sign-in yourself after the setup in the README.
+  new-browser restore of settings and the sealed connection, wrong passphrase). On the real Supabase project the owner confirmed GitHub sign-in and saving the connection; Google sign-in and the explicit "Link" buttons have not been
+  confirmed yet.
 * Real GitHub run of the hardened compile job on the thesis, an XeLaTeX+Biber project and a pdfLaTeX project: all `ok`;
   thesis identical to the earlier build (170 pages, 66 warnings).
 * `npm audit` for the shipped code: 0 vulnerabilities. Six advisories remain in **development-only** tools (vite/vitest

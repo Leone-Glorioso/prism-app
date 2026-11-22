@@ -245,15 +245,16 @@ password would not be secret from it. The passphrase never leaves your browser. 
   \item \textbf{Google} or \textbf{GitHub}: one button, the provider asks you to agree, and you come back signed in. If the provider's verified email equals the
         address of an existing account, they become the same account, so you can sign up one way and sign in another.
   \item \textbf{Forgot your password?} sends a link; open it in the same browser and choose a new password.
-  \item \textbf{Sign out} ends the session. It does \emph{not} remove the token from the browser; on a shared computer use \emph{Clear this browser}.
+  \item \textbf{Link Google / Link GitHub} (\emph{Settings $\rightarrow$ Account}) joins another sign-in method to the signed-in account, so either opens the same account. Needed when the two email addresses differ.
+  \item \textbf{Sign out} ends the session, removes the token, drafts and settings from this browser and returns to the start page. The account keeps them; signing in again restores them.
 \end{itemize}
 
 \subsection{The first time, step by step}
 \begin{enumerate}
   \item Connect with your token as in the quick start.
   \item Menu (avatar) $\rightarrow$ \emph{Sign in or create an account}; sign up.
-  \item \emph{Settings $\rightarrow$ Account $\rightarrow$ Save my connection to my account}; choose a passphrase (8+ characters), type it twice.
-  \item On any other browser: open \leotex{}, sign in, type the passphrase, choose how this browser keeps the token (on the device, encrypted with
+  \item \emph{Settings $\rightarrow$ Account $\rightarrow$ Save my connection to my account}; choose \emph{Sign-in only} (no passphrase) or \emph{With a passphrase} (8+ characters, typed twice).
+  \item On any other browser: open \leotex{}, sign in (and type the passphrase if you chose one). With ``sign-in only'' your projects open at once; otherwise choose how this browser keeps the token (on the device, encrypted with
         the same passphrase, or only until the tab closes). Done.
 \end{enumerate}
 
@@ -266,11 +267,11 @@ The page has no server, so the person who runs the site creates a free project a
         row-level security (each user reaches only their own row), a ``delete my account'' function and a harmless \texttt{ping} function.
   \item \emph{Project Settings $\rightarrow$ API}: copy the \textbf{Project URL} and the \textbf{anon / publishable} key. Never use the \emph{service\_role} / secret key; the
         build refuses it.
-  \item \emph{Authentication $\rightarrow$ URL Configuration}: Site URL \url{https://prism-latex.github.io/prism-app/}; add the same address under \emph{Redirect URLs}.
+  \item \emph{Authentication $\rightarrow$ Sign In / Providers}: switch on \textbf{Allow manual linking}. \emph{Authentication $\rightarrow$ URL Configuration}: Site URL \url{https://prism-latex.github.io/prism-app/}; add the same address under \emph{Redirect URLs}.
   \item \emph{Authentication $\rightarrow$ Providers}: switch \textbf{Email} on. For \textbf{GitHub}: GitHub $\rightarrow$ Settings $\rightarrow$ Developer settings $\rightarrow$ OAuth Apps $\rightarrow$
         \emph{New}; homepage as above, callback \url{https://<project-ref>.supabase.co/auth/v1/callback}; copy Client ID and secret into Supabase. For \textbf{Google}:
-        Google Cloud Console $\rightarrow$ APIs \& Services $\rightarrow$ Credentials $\rightarrow$ \emph{OAuth client ID} (Web application) with the same callback address; copy Client ID
-        and secret into Supabase.
+        Google Cloud Console $\rightarrow$ Google Auth Platform: fill \emph{Branding} (app name, support email, home page, privacy policy link, authorised domains: your \texttt{<project-ref>.supabase.co} and \texttt{prism-latex.github.io}); \emph{Clients $\rightarrow$ Create client} (Web application) with the same callback address; copy Client ID
+        and secret into Supabase; on \emph{Audience} press \textbf{Publish app}.
   \item In the repository, create \fpath{cloud.config.json} next to \fpath{package.json}:\\
         \verb|{ "url": "https://<project-ref>.supabase.co",|\\
         \verb|  "anonKey": "<public key>" }|\\
@@ -280,6 +281,10 @@ The page has no server, so the person who runs the site creates a free project a
 announce the site. A weekly workflow (\fpath{keepalive.yml}) sends one harmless request so a free project is not paused for inactivity; GitHub switches scheduled
 workflows off after 60 days without any repository activity, so run it by hand now and then. The built-in Supabase email sender is limited to a few
 messages per hour; add your own SMTP server in Supabase if many people sign up.\end{caution}
+
+\subsection{Start page and speed}
+Not signed in, \leotex{} always opens on the start page (sign-in); signed in with a saved connection it opens your projects.
+A compile has a fixed start-up cost: GitHub starts a machine and downloads \TeX{} Live (about 90 seconds for the full image, 15 for the medium one). With the default ``latest'' setting the small image is tried first and the full one is used only when something is missing, remembered per project; simple documents finish in under a minute, documents that need the full \TeX{} Live take about two minutes. The status bar shows compile time and total time.
 
 \section{How the token is kept}
 \label{sec:token}
@@ -356,8 +361,7 @@ Package or program missing during compile & Everything in \TeX{} Live is availab
   \item In a real browser the editor was driven through typing: \texttt{/cit} + Enter inserts the command and lists the project's bibliography; typing narrows the list at once; \texttt{\textbackslash begin\{itemize\}}
         writes the \texttt{\textbackslash end}; Ctrl+S commits; Ctrl+B and a remapped shortcut edit the text; the settings page, themes, accents, picture upload and phone layout work.
   \item Accounts were exercised in a real browser against a \emph{simulated} account service: sign-up with confirmation, sign-in, the Google/GitHub redirect with PKCE, restoring settings and the
-        sealed connection on a ``new'' browser, wrong passphrase. \textbf{They have not yet been run against a real Supabase project.} Do the set-up in section~\ref{sec:owner} and sign in once to confirm
-        the provider settings; any mismatch there shows a clear error on the start page.
+        sealed connection on a ``new'' browser, wrong passphrase. On the real project the owner confirmed GitHub sign-in and saving the connection; Google sign-in and the explicit link buttons are not confirmed yet. A mismatch in provider settings shows a clear error on the start page.
   \item Earlier, on real GitHub runners: 45 real projects compiled online with identical page counts; \TeX{} Live switching and the time limit work.
 \end{itemize}
 

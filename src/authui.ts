@@ -45,6 +45,8 @@ export function buildAuthForm(cloud: Cloud, hooks: AuthHooks): HTMLElement {
       b.disabled = true;
       try { location.assign(await cloud.oauthUrl(p)); } catch (e) { say(e instanceof Error ? e.message : String(e), true); b.disabled = false; }
     });
+    // Coming back with the browser's Back button restores the page as it was: the button must work again.
+    window.addEventListener('pageshow', () => { b.disabled = false; });
     return b;
   };
 

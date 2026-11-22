@@ -2205,11 +2205,11 @@ async function connectFromPlain(c: Connection) {
 
 async function signOutNow() {
   if (!cloud) return;
+  const lost = ws?.dirty ? 'You have unsaved changes: they will be lost.\n\n' : '';
+  if (!confirm(`${lost}Sign out and remove the GitHub token, drafts and settings from this browser? Your account keeps your settings and saved connection.`)) return;
   await cloud.signOut();
-  if (sync) { sync.vault = undefined; sync.plain = undefined; }
-  vaultOffer = false;
-  afterAccountChange();
-  setStatus('Signed out. The token and drafts in this browser were kept; use "Clear this browser" on a shared computer.');
+  store.clearAllLocalData();
+  location.reload(); // back to the start page
 }
 
 function openVaultDialog() {

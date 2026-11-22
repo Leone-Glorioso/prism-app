@@ -190,9 +190,14 @@ export class Cloud {
     const p = await this.pkceParams('login');
     const q = new URLSearchParams({ provider, redirect_to: this.redirectTo, skip_http_redirect: 'true', code_challenge: p.code_challenge, code_challenge_method: p.code_challenge_method });
     const { body } = await this.call(`/auth/v1/user/identities/authorize?${q}`, { bearer: await this.accessToken() });
-    const url = (body as { url?: unknown } | null)?.url;
-    if (typeof url !== 'string' || !url.startsWith(this.cfg.url + '/')) throw new CloudError('The service did not return a valid link address.');
-    return url;
+    const url = (body && typeof body === 'object' ? (body as { url?: unknown }).url : undefined);
+    let ok = false;
+    try { const u = new URL(String(url)); ok = u.protocol === 'https:' || u.origin === this.cfg.url; } catch { /* not an address */ }
+    if (!ok) {
+      const seen = body && typeof body === 'object' ? Object.keys(body).join(', ') || 'an empty object' : typeof body;
+      throw new CloudError(`The service did not return a link address (it sent: ${seen}). In Supabase, check Authentication, Sign In / Providers, "Allow manual linking".`);
+    }
+    return String(url);
   }
 
   async recover(email: string): Promise<void> {

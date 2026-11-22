@@ -57,7 +57,7 @@ function parseStored(raw: string | null): Stored | null {
     const s = JSON.parse(raw) as Stored;
     if (!s || typeof s.owner !== 'string' || typeof s.repo !== 'string' || !s.owner || !s.repo) return null;
     const mode: Mode = s.mode === 'encrypted' || s.mode === 'session' ? s.mode : 'device';
-    return { owner: s.owner, repo: s.repo, branch: s.branch || 'main', mode, token: s.token, sealed: isSealed(s.sealed) ? s.sealed : undefined, expires: /^d{4}-d{2}-d{2}$/.test(s.expires ?? '') ? s.expires : undefined };
+    return { owner: s.owner, repo: s.repo, branch: s.branch || 'main', mode, token: s.token, sealed: isSealed(s.sealed) ? s.sealed : undefined, expires: /^\d{4}-\d{2}-\d{2}$/.test(s.expires ?? '') ? s.expires : undefined };
   } catch {
     return null;
   }

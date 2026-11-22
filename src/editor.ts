@@ -1,22 +1,22 @@
 // CodeMirror 6 setup: one view, one EditorState per open file (keeps undo history per file).
 
 import { basicSetup } from 'codemirror';
-import { EditorSelection, EditorState, Extension } from '@codemirror/state';
+import { EditorSelection, EditorState, Extension, Prec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { oneDark } from '@codemirror/theme-one-dark';
 import type { CompletionSource } from '@codemirror/autocomplete';
 import { isTexLike } from './util';
+import { ACTIONS, cmKey } from './shortcuts';
+import type { ActionId, ShortcutMap } from './shortcuts';
 
 const texLanguage = StreamLanguage.define(stex);
 
 export interface EditorHooks {
   onChange: (path: string, state: EditorState) => void;
   onCursor: (path: string, line: number) => void;
-  onSave: () => void;
-  onCompile: () => void;
-  onForward: () => void;
+  onAction: (id: ActionId) => void;
 }
 
 export interface EditorEnv {
@@ -24,7 +24,17 @@ export interface EditorEnv {
   spellcheck: boolean;
   lang: string;
   complete: CompletionSource;
+  keys: ShortcutMap;
+  lineWrap: boolean;
+  autoComplete: boolean;
 }
+
+/** Actions that edit the text around the selection (only in LaTeX files). */
+const WRAPPERS: Partial<Record<ActionId, [string, string]>> = {
+  bold: ['\\textbf{', '}'],
+  italic: ['\\emph{', '}'],
+  inlineMath: ['$', '$'],
+};
 
 export function createView(parent: HTMLElement): EditorView {
   return new EditorView({ parent });
@@ -43,16 +53,21 @@ export function createState(path: string, text: string, hooks: EditorHooks, env:
   const tex = isTexLike(path);
   const extensions: Extension[] = [
     basicSetup,
-    EditorView.lineWrapping,
-    keymap.of([
-      { key: 'Mod-s', preventDefault: true, run: () => { hooks.onSave(); return true; } },
-      { key: 'Mod-Enter', preventDefault: true, run: () => { hooks.onCompile(); return true; } },
-      { key: 'Mod-Alt-j', preventDefault: true, run: () => { hooks.onForward(); return true; } },
-      ...(tex ? [
-        { key: 'Mod-b', preventDefault: true, run: (v: EditorView) => wrapSelection(v, '\\textbf{', '}') },
-        { key: 'Mod-i', preventDefault: true, run: (v: EditorView) => wrapSelection(v, '\\emph{', '}') },
-      ] : []),
-    ]),
+    ...(env.lineWrap ? [EditorView.lineWrapping] : []),
+    Prec.high(keymap.of(ACTIONS.flatMap((a) => {
+      const key = cmKey(env.keys[a.id]);
+      if (!key) return [];
+      const wrap = WRAPPERS[a.id];
+      return [{
+        key,
+        preventDefault: true,
+        run: (v: EditorView) => {
+          if (wrap) return tex ? wrapSelection(v, wrap[0], wrap[1]) : false;
+          hooks.onAction(a.id);
+          return true;
+        },
+      }];
+    }))),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) hooks.onChange(path, u.state);
       else if (u.selectionSet) hooks.onCursor(path, u.state.doc.lineAt(u.state.selection.main.head).number);
@@ -68,7 +83,7 @@ export function createState(path: string, text: string, hooks: EditorHooks, env:
   if (tex) {
     extensions.push(texLanguage);
     // languageData instead of autocompletion({override}): basicSetup already configures autocompletion().
-    extensions.push(EditorState.languageData.of(() => [{ autocomplete: env.complete }]));
+    if (env.autoComplete) extensions.push(EditorState.languageData.of(() => [{ autocomplete: env.complete }]));
   }
   if (env.dark) extensions.push(oneDark);
   return EditorState.create({ doc: text, extensions });

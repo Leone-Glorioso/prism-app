@@ -1,5 +1,6 @@
 // Inline stroke icons (24x24). Static strings only — never build these from data.
 const P: Record<string, string> = {
+  back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   logo: '<path d="M12 3 21 19H3Z"/><path d="M12 3v16"/><path d="m3 19 9-6 9 6"/>',
   play: '<path d="m7 4 13 8-13 8Z"/>',
   save: '<path d="M5 3h11l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 1-2Z"/><path d="M8 3v5h7V3"/><path d="M8 21v-7h8v7"/>',

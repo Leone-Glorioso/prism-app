@@ -78,13 +78,13 @@ describe('diffLines', () => {
 });
 
 describe('completion', () => {
-  const src = completionSource(() => ({ labels: () => ['fig:one', 'sec:intro'], cites: () => ['knuth84', 'lamport94'], files: () => ['chapters/a.tex'] }));
+  const src = completionSource(() => ({ labels: () => ['fig:one', 'sec:intro'], cites: () => [{ key: 'knuth84', detail: 'Knuth 1984', info: 'Literate Programming' }, { key: 'lamport94', detail: 'Lamport 1994', info: 'LaTeX: A Document Preparation System' }], files: () => ['chapters/a.tex'] }));
   const run = (doc: string, explicit = false) => src(new CompletionContext(EditorState.create({ doc }), doc.length, explicit));
   it('completes labels, cite keys (after a comma), files and environments', () => {
     expect(run('see \\ref{fi')?.options.map((o) => o.label)).toEqual(['fig:one', 'sec:intro']);
     expect(run('see \\ref{fi')?.from).toBe(9);
     expect(run('\\cite{knuth84,la')?.from).toBe(14);
-    expect(run('\\cite[p.~3]{kn')?.options.map((o) => o.label)).toContain('lamport94');
+    expect(run('\\cite[p.~3]{kn')?.options.map((o) => o.displayLabel)).toEqual(['knuth84', 'lamport94']);
     expect(run('\\input{ch')?.options[0].label).toBe('chapters/a.tex');
     expect(run('\\begin{ite')?.options.map((o) => o.label)).toContain('itemize');
   });

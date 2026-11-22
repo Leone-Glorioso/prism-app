@@ -8,6 +8,6 @@ if (window.self !== window.top) {
   p.style.cssText = 'font:16px system-ui,sans-serif;padding:24px';
   body.append(p);
   document.documentElement.append(body);
-  throw new Error('Prism refuses to run inside a frame.');
+  throw new Error('LeoTeX refuses to run inside a frame.');
 }
 export {};

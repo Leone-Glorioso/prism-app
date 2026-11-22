@@ -1,0 +1,28 @@
+name: keep accounts awake
+
+# Free Supabase projects pause after a week without activity. This sends one harmless request a week.
+# It does nothing when the app is built without accounts (no cloud.config.json).
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Send one request
+        run: |
+          if [ ! -f cloud.config.json ]; then echo "No cloud.config.json: accounts are off, nothing to do."; exit 0; fi
+          url=$(jq -r .url cloud.config.json)
+          key=$(jq -r .anonKey cloud.config.json)
+          case "$url" in https://*) ;; *) echo "url must be https"; exit 1;; esac
+          curl --fail --silent --show-error --max-time 30 -X POST "$url/rest/v1/rpc/ping" \
+            -H "apikey: $key" -H "Authorization: Bearer $key" -H "Content-Type: application/json" -d '{}'
+          echo

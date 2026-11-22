@@ -9,11 +9,11 @@
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3 21 19H3Z'/%3E%3Cpath d='M12 3v16M3 19l9-6 9 6'/%3E%3C/svg%3E">
-  <title>Prism</title>
+  <title>LeoTeX</title>
 </head>
 <body data-view="editor">
   <header class="topbar">
-    <button id="brand" class="brand" type="button" title="All projects" aria-label="Prism: all projects"><span class="brand-mark" data-icon="logo"></span><span>Prism</span></button>
+    <button id="brand" class="brand" type="button" title="All projects" aria-label="LeoTeX: all projects"><span class="brand-mark" data-icon="logo"></span><span class="wordmark" aria-hidden="true">Leo<span class="tex">T<span class="e">e</span>X</span></span></button>
     <div class="project-picker">
       <button id="home-btn" class="btn" data-icon="folder" title="All projects" disabled><span class="label">Projects</span></button>
       <label class="sr-only" for="project">Project</label>
@@ -26,8 +26,19 @@
       <button id="save" class="btn" data-icon="save" title="Save (Ctrl+S)" disabled><span class="label">Save</span></button>
       <button id="compile" class="btn primary" data-icon="play" title="Save and compile (Ctrl+Enter)" disabled><span class="label">Compile</span></button>
       <button id="help" class="icon-btn" data-icon="help" title="Help and shortcuts" aria-label="Help and shortcuts"></button>
-      <button id="connection" class="icon-btn" data-icon="shield" title="Connection and security" aria-label="Connection and security"></button>
-      <button id="settings" class="icon-btn" data-icon="settings" title="Preferences" aria-label="Preferences"></button>
+      <div class="menu-wrap">
+        <button id="account-btn" class="avatar-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" title="Account and settings" aria-label="Account and settings"><span id="account-avatar" class="avatar"></span></button>
+        <div id="account-menu" class="menu" role="menu" hidden>
+          <div class="menu-head"><span id="menu-avatar" class="avatar"></span><div><strong id="menu-name">Guest</strong><span id="menu-sub" class="hint"></span></div></div>
+          <button role="menuitem" data-menu="settings" data-icon="settings">Settings</button>
+          <button role="menuitem" data-menu="shortcuts" data-icon="jump">Keyboard shortcuts</button>
+          <button role="menuitem" data-menu="connection" data-icon="shield">Connection and security</button>
+          <button role="menuitem" data-menu="help" data-icon="help">Help</button>
+          <hr>
+          <button role="menuitem" data-menu="signin" data-icon="lock">Sign in or create an account</button>
+          <button role="menuitem" data-menu="signout" data-icon="archive">Sign out</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -60,6 +71,109 @@
       <div id="home-grid" class="home-grid"></div>
     </div>
     <input type="file" id="zip-upload" accept=".zip,application/zip" hidden>
+  </section>
+
+  <section id="settings-page" class="settings-page" aria-label="Settings">
+    <div class="settings-inner">
+      <div class="settings-head">
+        <button id="sp-back" class="btn" type="button" data-icon="back"><span class="label">Back</span></button>
+        <h1>Settings</h1>
+      </div>
+      <div class="settings-body">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <button type="button" data-sp="profile" data-icon="image">Profile</button>
+          <button type="button" data-sp="appearance" data-icon="settings">Appearance</button>
+          <button type="button" data-sp="editor" data-icon="file">Editor</button>
+          <button type="button" data-sp="shortcuts" data-icon="jump">Shortcuts</button>
+          <button type="button" data-sp="connection" data-icon="shield">Connection</button>
+          <button type="button" data-sp="account" data-icon="lock">Account</button>
+          <button type="button" data-sp="about" data-icon="help">About</button>
+        </nav>
+        <div class="settings-content">
+          <section class="spanel" id="sp-profile" hidden>
+            <h2>Profile</h2>
+            <div class="avatar-row">
+              <span id="sp-avatar" class="avatar xl"></span>
+              <div>
+                <button id="sp-avatar-pick" class="btn sm" type="button" data-icon="upload">Upload image…</button>
+                <button id="sp-avatar-remove" class="btn sm" type="button">Remove</button>
+                <p class="hint">PNG, JPEG or WebP. It is shrunk to 160 × 160 pixels in your browser and stored with your settings.</p>
+              </div>
+              <input id="sp-avatar-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            </div>
+            <label class="field">Display name<input id="sp-name" maxlength="60" autocomplete="name" placeholder="Your name"></label>
+            <p id="sp-profile-msg" class="hint" role="status"></p>
+          </section>
+
+          <section class="spanel" id="sp-appearance" hidden>
+            <h2>Appearance</h2>
+            <fieldset class="field"><legend>Theme</legend>
+              <div id="sp-theme" class="choice" role="radiogroup" aria-label="Theme">
+                <button type="button" role="radio" data-v="auto">Match system</button>
+                <button type="button" role="radio" data-v="light">Light</button>
+                <button type="button" role="radio" data-v="dark">Dark</button>
+              </div>
+            </fieldset>
+            <fieldset class="field"><legend>Accent colour</legend>
+              <div id="sp-accents" class="swatches" role="radiogroup" aria-label="Accent colour"></div>
+            </fieldset>
+            <div class="row2">
+              <label class="field">Editor font<select id="sp-font"></select></label>
+              <label class="field">Editor text size (px)<input id="sp-size" type="number" min="10" max="28" step="1"></label>
+            </div>
+            <div id="sp-sample" class="sample" aria-hidden="true">\section{Preview} Text like this appears in the editor: $E = mc^2$.</div>
+          </section>
+
+          <section class="spanel" id="sp-editor" hidden>
+            <h2>Editor</h2>
+            <label class="switch"><input id="sp-autocomplete" type="checkbox"><span><strong>Suggestions while typing</strong> commands, environments, citations (<code>\cite{</code> lists your .bib entries), labels, packages and files. Type <code>/cite</code> or <code>\cite</code>.</span></label>
+            <label class="switch"><input id="sp-linenumbers" type="checkbox"><span><strong>Line numbers</strong></span></label>
+            <label class="switch"><input id="sp-wrap" type="checkbox"><span><strong>Wrap long lines</strong></span></label>
+            <label class="switch"><input id="sp-spell" type="checkbox"><span><strong>Spell-check while typing</strong> using your browser's dictionary</span></label>
+            <label class="field">Spell-check language
+              <select id="sp-lang"><option value="en">English</option><option value="el">Greek</option><option value="de">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option></select>
+            </label>
+            <label class="field">Click in the PDF to jump to the source
+              <select id="sp-jump"><option value="double">Double-click</option><option value="ctrl">Ctrl/Cmd + click</option><option value="off">Off</option></select>
+            </label>
+            <label class="switch"><input id="sp-follow" type="checkbox"><span><strong>PDF follows the cursor</strong> scrolls to the line you are editing</span></label>
+          </section>
+
+          <section class="spanel" id="sp-shortcuts" hidden>
+            <h2>Keyboard shortcuts</h2>
+            <p class="hint">Choose an action, press <strong>Change</strong>, then press the new keys. Use Ctrl (Cmd on a Mac) or Alt with a key. Keys the browser needs, such as Ctrl+W, are refused.</p>
+            <div id="sp-keys" class="keys"></div>
+            <p id="sp-keys-msg" class="error" role="alert"></p>
+            <button id="sp-keys-reset" class="btn sm" type="button">Reset all to defaults</button>
+          </section>
+
+          <section class="spanel" id="sp-connection" hidden>
+            <h2>Connection and security</h2>
+            <div id="sp-conn-info" class="card-note"></div>
+            <div class="btn-row">
+              <button id="sp-conn-edit" class="btn" type="button" data-icon="shield">Change connection…</button>
+              <button id="sp-conn-clear" class="btn danger" type="button">Clear this browser</button>
+            </div>
+            <p class="hint">The token stays in this browser (or sealed in your account if you choose). Clearing this browser removes the token, unsaved drafts and preferences stored here; your account and your GitHub repository are not touched.</p>
+          </section>
+
+          <section class="spanel" id="sp-account" hidden>
+            <h2>Account</h2>
+            <div id="sp-account-body"></div>
+          </section>
+
+          <section class="spanel" id="sp-about" hidden>
+            <h2>About LeoTeX</h2>
+            <p>LeoTeX <span id="sp-version"></span>. An online LaTeX editor that keeps your projects in your own private GitHub repository and compiles them with a complete TeX Live in GitHub Actions.</p>
+            <ul class="plain">
+              <li>Free software under the <a href="https://github.com/prism-latex/prism-app/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT licence</a>. Source: <a href="https://github.com/prism-latex/prism-app" target="_blank" rel="noopener noreferrer">github.com/prism-latex/prism-app</a>.</li>
+              <li>No analytics and no third-party scripts. The page talks to GitHub (and, only if you use an account, to the account service) and nothing else.</li>
+              <li>Security notes: <a href="https://github.com/prism-latex/prism-app/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">SECURITY.md</a>.</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </div>
   </section>
 
   <main class="layout" id="layout">
@@ -152,17 +266,19 @@
     </section>
 
     <div id="welcome" class="welcome" hidden>
-      <div class="welcome-card">
-        <div class="welcome-mark" data-icon="logo"></div>
-        <h1>Your LaTeX projects, online</h1>
-        <p>Edit in the browser, compile with full TeX Live (pdfLaTeX, XeLaTeX, LuaLaTeX, BibTeX, Biber) and read the PDF next to your source.</p>
-        <ul class="welcome-points">
-          <li data-icon="lock"><span>Files stay in <strong>your own private</strong> GitHub repository, with full history.</span></li>
-          <li data-icon="play"><span>Compiles run in GitHub Actions with full TeX Live — no page or package limits.</span></li>
-          <li data-icon="jump"><span>Click in the PDF to jump to the source, and back.</span></li>
-        </ul>
-        <button id="welcome-connect" class="btn primary lg">Connect repository</button>
-        <p class="hint">First time? The connection window explains how to create your own repository in about two minutes.</p>
+      <div class="landing">
+        <div class="landing-copy">
+          <div class="welcome-mark" data-icon="logo"></div>
+          <h1>Write LaTeX anywhere.<br>Your files stay yours.</h1>
+          <p class="lead">LeoTeX is an online editor with a complete TeX Live behind it. Edit in the browser, compile any document and read the PDF next to your source.</p>
+          <ul class="welcome-points">
+            <li data-icon="lock"><span>Projects live in <strong>your own private</strong> GitHub repository, with full history.</span></li>
+            <li data-icon="play"><span>Compiles run in GitHub Actions with a full TeX Live: no page or package limits.</span></li>
+            <li data-icon="jump"><span>Click in the PDF to jump to the source, and back. Smart completion for commands, citations and labels.</span></li>
+            <li data-icon="sliders"><span>Your settings, shortcuts and connection follow you to every browser with a free account.</span></li>
+          </ul>
+        </div>
+        <div class="landing-card" id="landing-card" aria-live="polite"></div>
       </div>
     </div>
   </main>
@@ -216,25 +332,22 @@
     </div>
   </dialog>
 
-  <dialog id="prefs-dialog" aria-labelledby="prefs-title">
-    <h2 id="prefs-title">Preferences</h2>
-    <div class="form-grid">
-      <label>Theme
-        <select id="pf-theme"><option value="auto">Match system</option><option value="light">Light</option><option value="dark">Dark</option></select>
-      </label>
-      <label>Editor font size<input id="pf-size" type="number" min="10" max="28" step="1"></label>
-      <label>Click in the PDF to jump to source
-        <select id="pf-jump"><option value="double">Double-click</option><option value="ctrl">Ctrl/Cmd + click</option><option value="off">Off</option></select>
-      </label>
-      <label>Spell-check language
-        <select id="pf-lang"><option value="en">English</option><option value="el">Greek</option><option value="de">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option></select>
-      </label>
-      <label class="check wide"><input id="pf-spell" type="checkbox"><span>Spell-check while typing (uses your browser's dictionary)</span></label>
-      <label class="check wide"><input id="pf-follow" type="checkbox"><span>Scroll the PDF to follow the cursor</span></label>
-    </div>
+  <dialog id="auth-dialog" aria-labelledby="auth-title">
+    <h2 id="auth-title">Sign in to LeoTeX</h2>
+    <div id="auth-form"></div>
+    <div class="dialog-buttons"><span class="sep"></span><button id="auth-close" class="btn">Close</button></div>
+  </dialog>
+
+  <dialog id="vault-dialog" aria-labelledby="vault-title">
+    <h2 id="vault-title">Vault passphrase</h2>
+    <p id="vault-text" class="hint"></p>
+    <label>Passphrase<input id="v-pass" type="password" autocomplete="off" spellcheck="false"></label>
+    <label id="v-pass2-label">Repeat the passphrase<input id="v-pass2" type="password" autocomplete="off" spellcheck="false"></label>
+    <p id="v-error" class="error" role="alert"></p>
     <div class="dialog-buttons">
       <span class="sep"></span>
-      <button id="pf-close" class="btn primary">Done</button>
+      <button id="v-cancel" class="btn">Cancel</button>
+      <button id="v-ok" class="btn primary">Continue</button>
     </div>
   </dialog>
 
@@ -292,14 +405,14 @@
       <section>
         <h3>Write</h3>
         <dl>
-          <dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Save (one commit to GitHub)</dd>
-          <dt><kbd>Ctrl</kbd> <kbd>Enter</kbd></dt><dd>Save and compile</dd>
-          <dt><kbd>Ctrl</kbd> <kbd>B</kbd> / <kbd>I</kbd></dt><dd>Bold / emphasis around the selection</dd>
           <dt><kbd>Ctrl</kbd> <kbd>/</kbd></dt><dd>Comment or uncomment lines</dd>
           <dt><kbd>Ctrl</kbd> <kbd>F</kbd></dt><dd>Find in this file</dd>
           <dt><kbd>Ctrl</kbd> <kbd>Space</kbd></dt><dd>Show suggestions</dd>
-          <dt>type <code>igure</code> …</dt><dd>Ready-made blocks: <code>igure 	able equation align itemize enumerate rame 	ikz plot code 	heorem</code>. Enter inserts, Tab moves to the next blank.</dd>
+          <dt>type <code>\cite</code> or <code>/cite</code></dt><dd>Suggestions for commands; after <code>\cite{</code> your bibliography entries appear (search by key, author, title or year). Enter inserts, Tab moves to the next blank.</dd>
+          <dt>type <code>\figure</code> …</dt><dd>Ready-made blocks: <code>\figure \table \equation \align \itemize \enumerate \frame \tikz \plot \code \theorem</code>.</dd>
         </dl>
+        <h3>Your shortcuts <button id="help-edit-keys" class="btn sm" type="button">Change…</button></h3>
+        <dl id="help-keys"></dl>
       </section>
       <section>
         <h3>Find your way</h3>
@@ -318,9 +431,9 @@
           <li>Nothing reaches GitHub until you press <strong>Save</strong>. Unsaved text is kept in this browser.</li>
           <li>The compiler is a complete TeX Live in GitHub Actions. Choose its version under <em>Compiler</em> on the start screen.</li>
           <li>If two people (or Codex or Claude) edit the same file, the app asks which version to keep.</li>
-          <li>Your token stays in this browser only. Use <em>Connection and security</em> to change or clear it.</li>
+          <li>Your token stays in this browser, or sealed with your own passphrase in your account. Use <em>Connection and security</em> to change or clear it.</li>
         </ul>
-        <p class="hint">Prism web <span id="app-version"></span></p>
+        <p class="hint">LeoTeX <span id="app-version"></span></p>
       </section>
     </div>
     <div class="dialog-buttons">

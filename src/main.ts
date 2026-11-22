@@ -11,13 +11,23 @@ import { createState, createView, currentLine, EditorEnv, goToLine } from './edi
 import * as store from './storage';
 import { applyIcons, icon } from './icons';
 import { applyPrefs, isDark, loadPrefs, Prefs, sanitize, savePrefs } from './prefs';
+import { Cloud } from './cloud';
+import { AccountSync, openConnection, sanitizeProfile, sealConnection } from './account';
+import type { Profile } from './account';
+import { loadProfile, paintAvatar, saveProfile } from './profile';
+import { ACTIONS, comboOf, formatCombo, loadShortcuts, saveShortcuts } from './shortcuts';
+import type { ActionId, ShortcutMap } from './shortcuts';
+import { initSettingsView } from './settingsview';
+import type { SectionId } from './settingsview';
+import { buildAuthForm, el } from './authui';
 import { forward, inverse, mapInputs, parseSynctexFile, SyncTex } from './synctex';
 import { ProjectIndex } from './projectindex';
 import { projectOutline, wordCount } from './outline';
 import { replaceInTexts, searchTexts } from './search';
 import { daysLeft, expiryState } from './expiry';
 import { diffLines } from './diff';
-import { citeKeysIn, completionSource, labelsIn } from './complete';
+import { citeEntriesIn, completionSource, labelsIn } from './complete';
+import type { CiteEntry } from './complete';
 import { SETUP_FILES, setupStatus } from './setup';
 import { TEMPLATES, templateById } from './templates';
 import {
@@ -50,6 +60,8 @@ const MAX_UPLOAD = 50 * 1024 * 1024;
 
 let settings: store.Settings | null = null;
 let prefs: Prefs = loadPrefs();
+let shortcuts: ShortcutMap = loadShortcuts();
+let profile: Profile = loadProfile();
 let gh: GitHub | null = null;
 let ws: Workspace | null = null;
 let index: ProjectIndex | null = null;
@@ -68,7 +80,7 @@ let previewUrl: string | null = null;
 let sideTab: 'files' | 'outline' | 'search' = 'files';
 let outlineTexts = new Map<string, string>();
 let completionLabels: string[] = [];
-let completionCites: string[] = [];
+let completionCites: CiteEntry[] = [];
 let completionFiles: string[] = [];
 const syncCache = new WeakMap<Build, Promise<SyncState | null>>();
 
@@ -258,7 +270,7 @@ const rootOf = (m: ManifestEntry) => m.MainFile.replace(/\\/g, '/').split('/')[0
 const hasLocalChanges = (m: ManifestEntry) => !!ws && [...ws.changes.keys()].some((p) => p.startsWith(`${rootOf(m)}/`));
 const ENGINE_LABEL: Record<string, string> = { pdflatex: 'pdfLaTeX', xelatex: 'XeLaTeX', lualatex: 'LuaLaTeX' };
 
-function setMode(m: 'home' | 'editor') {
+function setMode(m: 'home' | 'editor' | 'settings') {
   document.body.dataset.mode = m;
 }
 
@@ -266,7 +278,7 @@ function showHome() {
   if (!ws) return;
   flushEdits();
   setMode('home');
-  document.title = 'Prism';
+  document.title = 'LeoTeX';
   renderHome();
   void refreshEdited();
   setEnabled();
@@ -501,7 +513,7 @@ async function selectProject(name: string | null) {
   renderLog();
   closeEditor();
   $('build-info').replaceChildren();
-  document.title = project ? `${project.Project} — Prism` : 'Prism';
+  document.title = project ? `${project.Project} — LeoTeX` : 'LeoTeX';
   if (!project) { renderTree(); renderOutline(); setEnabled(); return; }
   $<HTMLSelectElement>('project').value = project.Project;
   if (settings) store.setLastProject(settings, project.Project);
@@ -542,13 +554,13 @@ async function rebuildIndex() {
     if (run !== indexRun || !project) return;
     outlineTexts = texts;
     const labels: string[] = [];
-    const cites: string[] = [];
+    const cites: CiteEntry[] = [];
     for (const [p, t] of texts) {
       if (/\.(tex|ltx|sty|cls)$/i.test(p)) labels.push(...labelsIn(t));
-      if (/\.(bib|tex|bbl)$/i.test(p)) cites.push(...citeKeysIn(t));
+      if (/\.(bib|tex|bbl)$/i.test(p)) cites.push(...citeEntriesIn(p, t));
     }
     completionLabels = [...new Set(labels)].sort();
-    completionCites = [...new Set(cites)].sort();
+    completionCites = cites;
     const mainDir = dirname(mainPath());
     completionFiles = ws.paths()
       .filter((p) => p.startsWith(`${mainDir}/`) && !/\.(aux|log|out|toc|blg|bbl|fls|gz|lof|lot|bcf|xml|xdv)$/i.test(p))
@@ -565,6 +577,9 @@ function editorEnv(): EditorEnv {
     spellcheck: prefs.spellcheck,
     lang: prefs.spellLang,
     complete: completionSource(() => ({ labels: () => completionLabels, cites: () => completionCites, files: () => completionFiles })),
+    keys: shortcuts,
+    lineWrap: prefs.lineWrap,
+    autoComplete: prefs.autoComplete,
   };
 }
 
@@ -888,9 +903,7 @@ const hooks = {
     clearTimeout(followTimer);
     followTimer = window.setTimeout(() => void forwardSearch(true), 400);
   },
-  onSave: () => void save(),
-  onCompile: () => void runCompile(),
-  onForward: () => void forwardSearch(),
+  onAction: (id: ActionId) => runAction(id),
 };
 
 /** Moves pending editor text into the workspace. */
@@ -940,18 +953,18 @@ async function doSave(): Promise<boolean> {
   setStatus('Saving…', 'busy');
   try {
     try {
-      await ws.save(`${message} (Prism web)`);
+      await ws.save(`${message} (LeoTeX)`);
     } catch (e) {
       if (!(e instanceof ConflictError)) throw e;
       const list = e.paths.join('\n');
       const keepMine = confirm(
         `These files were changed somewhere else (another device, Codex or Claude) after you started editing:\n\n${list}\n\n` +
         `OK = keep YOUR version (replaces their change to these files)\nCancel = keep THEIR version (discards your edits to these files)`);
-      if (keepMine) await ws.save(`${message} (Prism web, kept local version)`, e.paths);
+      if (keepMine) await ws.save(`${message} (LeoTeX, kept local version)`, e.paths);
       else {
         for (const p of e.paths) { ws.revert(p); open.delete(p); }
         await ws.refresh();
-        if (ws.dirty) await ws.save(`${message} (Prism web)`);
+        if (ws.dirty) await ws.save(`${message} (LeoTeX)`);
       }
     }
   } catch (e) {
@@ -1435,6 +1448,7 @@ function renderBanner() {
   if (authProblem) showBanner('GitHub no longer accepts your token (it expired or was revoked). Your edits are kept in this browser. Enter a new token to continue.', 'Update token', () => openSettings(), 'error');
   else if (ex) showBanner(ex.text, 'Update token', () => openSettings(), ex.level === 'expired' ? 'error' : 'warn');
   else if (setupBanner) showBanner(setupBanner, 'Set up', () => openSetup());
+  else if (vaultOffer) showBanner('Save your connection to your account, protected by a passphrase, so other browsers need only your sign-in.', 'Save', () => openVaultDialog());
   else hideBanner();
 }
 
@@ -1460,7 +1474,7 @@ async function runSetup() {
   err.textContent = 'Setting up…';
   for (const p of paths) ws.put(p, encodeText(SETUP_FILES[p]));
   try {
-    await ws.save('Set up Prism compile workflow (Prism web)');
+    await ws.save('Set up LeoTeX compile workflow');
   } catch (e) {
     for (const p of paths) ws.revert(p);
     const msg = errorText(e);
@@ -1581,32 +1595,6 @@ async function submitUnlock() {
   } catch (e) {
     err.textContent = e instanceof WrongPassphrase ? e.message : errorText(e);
   }
-}
-
-function openPrefs() {
-  $<HTMLSelectElement>('pf-theme').value = prefs.theme;
-  $<HTMLInputElement>('pf-size').value = String(prefs.fontSize);
-  $<HTMLSelectElement>('pf-jump').value = prefs.pdfJump;
-  $<HTMLSelectElement>('pf-lang').value = prefs.spellLang;
-  $<HTMLInputElement>('pf-spell').checked = prefs.spellcheck;
-  $<HTMLInputElement>('pf-follow').checked = prefs.followCursor;
-  $<HTMLDialogElement>('prefs-dialog').showModal();
-}
-
-function prefsChanged() {
-  const before = prefs;
-  prefs = sanitize({
-    theme: $<HTMLSelectElement>('pf-theme').value as Prefs['theme'],
-    fontSize: Number($<HTMLInputElement>('pf-size').value),
-    spellcheck: $<HTMLInputElement>('pf-spell').checked,
-    spellLang: $<HTMLSelectElement>('pf-lang').value,
-    pdfJump: $<HTMLSelectElement>('pf-jump').value as Prefs['pdfJump'],
-    followCursor: $<HTMLInputElement>('pf-follow').checked,
-  });
-  savePrefs(prefs);
-  applyPrefs(prefs);
-  pdf.jumpMode = prefs.pdfJump;
-  if (before.theme !== prefs.theme || before.spellcheck !== prefs.spellcheck || before.spellLang !== prefs.spellLang) rebuildEditorStates();
 }
 
 type ProjectDialogMode = 'new' | 'edit' | 'rename' | 'duplicate';
@@ -1825,8 +1813,8 @@ $('p-open-compiler').addEventListener('click', () => { $<HTMLDialogElement>('pro
 $('c-cancel').addEventListener('click', () => $<HTMLDialogElement>('compiler-dialog').close());
 $('c-ok').addEventListener('click', applyCompilerDialog);
 $('c-texlive').addEventListener('change', () => { $('c-texlive-hint').textContent = describeTexlive($<HTMLSelectElement>('c-texlive').value); });
-$('brand').addEventListener('click', showHome);
-$('home-btn').addEventListener('click', showHome);
+$('brand').addEventListener('click', goHome);
+$('home-btn').addEventListener('click', goHome);
 $('home-new').addEventListener('click', () => openProjectDialog('new'));
 $('home-upload').addEventListener('click', () => $<HTMLInputElement>('zip-upload').click());
 $<HTMLInputElement>('zip-upload').addEventListener('change', (e) => {
@@ -1836,9 +1824,11 @@ $<HTMLInputElement>('zip-upload').addEventListener('change', (e) => {
 $('home-search').addEventListener('input', renderHome);
 $('home-sort').addEventListener('change', renderHome);
 $('p-template').addEventListener('change', applyTemplateToDialog);
-$('settings').addEventListener('click', openPrefs);
-$('connection').addEventListener('click', () => openSettings());
-$('welcome-connect').addEventListener('click', () => openSettings());
+$('sp-back').addEventListener('click', closeSettingsPage);
+$('help-edit-keys').addEventListener('click', () => { $<HTMLDialogElement>('help-dialog').close(); openSettingsPage('shortcuts'); });
+$('auth-close').addEventListener('click', () => { $<HTMLDialogElement>('auth-dialog').close(); $('auth-title').textContent = 'Sign in to LeoTeX'; });
+$('v-cancel').addEventListener('click', () => $<HTMLDialogElement>('vault-dialog').close());
+$('v-ok').addEventListener('click', () => void submitVault());
 $('banner-close').addEventListener('click', hideBanner);
 
 // Resizable panels (desktop). Widths are remembered in this browser.
@@ -1905,19 +1895,13 @@ $('banner-close').addEventListener('click', hideBanner);
 $('s-cancel').addEventListener('click', () => $<HTMLDialogElement>('settings-dialog').close());
 $('s-save').addEventListener('click', () => void submitSettings());
 for (const r of document.querySelectorAll('input[name="s-mode"]')) r.addEventListener('change', syncPassField);
-$('s-forget').addEventListener('click', () => {
-  if (!confirm('Remove the token, unsaved drafts and preferences from this browser?\n\nUnsaved changes that were never saved to GitHub will be lost.')) return;
-  store.clearAllLocalData();
-  location.reload();
-});
+$('s-forget').addEventListener('click', clearBrowser);
 $('u-ok').addEventListener('click', () => void submitUnlock());
 $('u-forget').addEventListener('click', () => {
   if (!confirm('Forget the stored token and any drafts kept in this browser?')) return;
   store.clearAllLocalData();
   location.reload();
 });
-$('pf-close').addEventListener('click', () => $<HTMLDialogElement>('prefs-dialog').close());
-for (const id of ['pf-theme', 'pf-size', 'pf-jump', 'pf-lang', 'pf-spell', 'pf-follow']) $(id).addEventListener('change', prefsChanged);
 $('p-cancel').addEventListener('click', () => $<HTMLDialogElement>('project-dialog').close());
 $('p-ok').addEventListener('click', submitProjectDialog);
 $('setup-cancel').addEventListener('click', () => $<HTMLDialogElement>('setup-dialog').close());
@@ -1971,14 +1955,13 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('.view-tabs button'
 }
 
 document.addEventListener('keydown', (e) => {
-  const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); void save(); }
-  if (mod && e.key === 'Enter' && !compiling) { e.preventDefault(); void runCompile(); }
-  if (mod && e.shiftKey && e.key.toLowerCase() === 'f' && ws) {
-    e.preventDefault();
-    showView('files');
-    setSideTab('search');
-  }
+  if (e.defaultPrevented || document.querySelector('dialog[open]')) return; // the editor or a window already handled it
+  const combo = comboOf(e);
+  if (!combo) return;
+  const action = ACTIONS.find((a) => shortcuts[a.id] === combo);
+  if (!action || action.editorOnly) return; // text-wrapping shortcuts belong to the editor
+  e.preventDefault();
+  runAction(action.id);
 });
 window.addEventListener('beforeunload', (e) => {
   flushEdits();
@@ -1989,14 +1972,404 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') renderBanner(); // the expiry date may have come within 10 days meanwhile
   if (document.visibilityState === 'visible' && ws && !saving) void refresh();
 });
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (prefs.theme === 'auto') rebuildEditorStates(); });
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { applyPrefs(prefs); if (prefs.theme === 'auto') rebuildEditorStates(); });
+
+// ---------- Settings, shortcuts and account ----------
+
+const cloudConfig = typeof __CLOUD_CONFIG__ === 'undefined' ? null : __CLOUD_CONFIG__;
+let cloud: Cloud | null = null;
+try {
+  if (cloudConfig) cloud = new Cloud(cloudConfig, `${location.origin}${location.pathname}`);
+} catch (e) {
+  console.error('Account service disabled:', e);
+}
+let accountNotice = ''; // sign-in problems or confirmations to show on the start page
+let recoveryPending = false;
+let vaultOffer = false;
+let modeBeforeSettings: string | undefined;
+
+const sync: AccountSync | null = cloud
+  ? new AccountSync(cloud, () => ({ profile, prefs, shortcuts }), (r) => {
+    commitProfile(r.profile);
+    commitPrefs(r.prefs);
+    commitShortcuts(r.shortcuts);
+    settingsView.refresh();
+  })
+  : null;
+
+function commitPrefs(next: Prefs) {
+  const before = prefs;
+  prefs = sanitize(next);
+  savePrefs(prefs);
+  applyPrefs(prefs);
+  pdf.jumpMode = prefs.pdfJump;
+  const rebuild: (keyof Prefs)[] = ['theme', 'spellcheck', 'spellLang', 'lineWrap', 'autoComplete'];
+  if (rebuild.some((k) => before[k] !== prefs[k])) rebuildEditorStates();
+}
+function setPrefs(next: Prefs) { commitPrefs(next); sync?.touch(); settingsView.refresh(); }
+
+function commitShortcuts(next: ShortcutMap) {
+  shortcuts = next;
+  saveShortcuts(next);
+  rebuildEditorStates();
+  renderHelpKeys();
+}
+function setShortcuts(next: ShortcutMap) { commitShortcuts(next); sync?.touch(); }
+
+function commitProfile(p: Profile) {
+  profile = sanitizeProfile(p);
+  saveProfile(profile);
+  paintAccount();
+}
+function setProfile(p: Profile) { commitProfile(p); sync?.touch(); settingsView.refresh(); }
+
+function paintAccount() {
+  const user = cloud?.session?.user ?? null;
+  paintAvatar($('account-avatar'), profile, user?.email);
+  paintAvatar($('menu-avatar'), profile, user?.email);
+  $('menu-name').textContent = profile.name || user?.name || (user ? 'Signed in' : 'Guest');
+  $('menu-sub').textContent = user?.email ?? (cloud ? 'Not signed in' : 'Settings stay in this browser');
+  const item = (id: string) => document.querySelector<HTMLElement>(`#account-menu [data-menu="${id}"]`)!;
+  item('signin').hidden = !cloud || !!user;
+  item('signout').hidden = !user;
+}
+
+function renderHelpKeys() {
+  const dl = $('help-keys');
+  dl.replaceChildren();
+  for (const a of ACTIONS) {
+    const dt = document.createElement('dt');
+    const kbd = document.createElement('kbd');
+    kbd.textContent = formatCombo(shortcuts[a.id]);
+    dt.append(kbd);
+    const dd = document.createElement('dd');
+    dd.textContent = a.label;
+    dl.append(dt, dd);
+  }
+}
+
+/** The actions behind the keyboard shortcuts (the editor handles the text-wrapping ones itself). */
+function runAction(id: ActionId) {
+  const inSettings = document.body.dataset.mode === 'settings';
+  switch (id) {
+    case 'save': void save(); break;
+    case 'compile': if (!compiling && project) void runCompile(); break;
+    case 'forward': if (!inSettings) void forwardSearch(); break;
+    case 'searchProject':
+      if (ws && project && document.body.dataset.mode === 'editor') { showView('files'); setSideTab('search'); }
+      break;
+    case 'projects': goHome(); break;
+    case 'settings': openSettingsPage(); break;
+    default: break;
+  }
+}
+
+function goHome() {
+  if (!ws) closeSettingsPage();
+  else showHome();
+}
+
+// ----- settings page -----
+
+function clearBrowser() {
+  if (!confirm('Remove the token, unsaved drafts, preferences and sign-in from this browser?\n\nUnsaved changes that were never saved to GitHub will be lost. Your account and your GitHub repository are not touched.')) return;
+  store.clearAllLocalData();
+  location.reload();
+}
+
+const settingsView = initSettingsView({
+  prefs: () => prefs,
+  setPrefs,
+  shortcuts: () => shortcuts,
+  setShortcuts,
+  profile: () => profile,
+  setProfile,
+  email: () => cloud?.session?.user.email,
+  connection: () => (settings ? { owner: settings.owner, repo: settings.repo, branch: settings.branch, mode: settings.mode, expires: settings.expires } : null),
+  editConnection: () => openSettings(),
+  clearBrowser,
+  version: `v${__APP_VERSION__}`,
+  account: {
+    configured: !!cloud,
+    user: () => cloud?.session?.user ?? null,
+    syncError: () => sync?.lastError ?? '',
+    hasVault: () => !!sync?.vault,
+    connected: () => !!settings,
+    signIn: () => openAuthDialog(),
+    signOut: () => signOutNow(),
+    saveConnection: () => openVaultDialog(),
+    removeConnection: () => void removeVault(),
+    changePassword: (pw) => cloud!.changePassword(pw),
+    deleteAccount: async () => { await cloud!.deleteAccount(); sync!.vault = undefined; afterAccountChange(); },
+    syncNow: async () => { await sync!.sync(); settingsView.refresh(); },
+  },
+});
+
+function openSettingsPage(section: SectionId = 'profile') {
+  closeMenu();
+  if (document.body.dataset.mode !== 'settings') modeBeforeSettings = document.body.dataset.mode;
+  document.body.dataset.mode = 'settings';
+  settingsView.show(section);
+  document.title = 'Settings — LeoTeX';
+}
+
+function closeSettingsPage() {
+  settingsView.cancelCapture();
+  if (modeBeforeSettings) document.body.dataset.mode = modeBeforeSettings;
+  else delete document.body.dataset.mode;
+  document.title = project ? `${project.Project} — LeoTeX` : 'LeoTeX';
+}
+
+// ----- account menu -----
+
+function closeMenu() {
+  $('account-menu').hidden = true;
+  $('account-btn').setAttribute('aria-expanded', 'false');
+}
+function toggleMenu() {
+  const menu = $('account-menu');
+  const opening = menu.hidden;
+  menu.hidden = !opening;
+  $('account-btn').setAttribute('aria-expanded', String(opening));
+  if (opening) menu.querySelector<HTMLElement>('button[role="menuitem"]:not([hidden])')?.focus();
+}
+$('account-btn').addEventListener('click', toggleMenu);
+document.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('.menu-wrap')) closeMenu(); });
+$('account-menu').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeMenu(); $('account-btn').focus(); return; }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const items = [...$('account-menu').querySelectorAll<HTMLElement>('button[role="menuitem"]:not([hidden])')];
+  const i = items.indexOf(document.activeElement as HTMLElement);
+  items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
+  e.preventDefault();
+});
+for (const b of document.querySelectorAll<HTMLButtonElement>('#account-menu [data-menu]')) {
+  b.addEventListener('click', () => {
+    closeMenu();
+    switch (b.dataset.menu) {
+      case 'settings': openSettingsPage('profile'); break;
+      case 'shortcuts': openSettingsPage('shortcuts'); break;
+      case 'connection': openSettings(); break;
+      case 'help': $('help').click(); break;
+      case 'signin': openAuthDialog(); break;
+      case 'signout': void signOutNow(); break;
+    }
+  });
+}
+
+// ----- sign-in, sign-out and the account record -----
+
+function afterAccountChange() {
+  paintAccount();
+  settingsView.refresh();
+  if (!ws) renderLanding();
+  renderBanner();
+}
+
+if (cloud) cloud.onSessionChange = () => afterAccountChange();
+
+function openAuthDialog(tab: 'signin' | 'signup' = 'signin') {
+  if (!cloud) return;
+  const dlg = $<HTMLDialogElement>('auth-dialog');
+  $('auth-form').replaceChildren(buildAuthForm(cloud, { startTab: tab, onSignedIn: () => { dlg.close(); void afterSignIn(); } }));
+  if (!dlg.open) dlg.showModal();
+}
+
+/** Brings settings, shortcuts and profile together with the account, then shows what is next. */
+async function afterSignIn() {
+  if (!cloud?.session || !sync) return;
+  paintAccount();
+  try {
+    await sync.sync();
+  } catch (e) {
+    sync.lastError = errorText(e);
+    console.error('Account sync failed', e);
+  }
+  accountNotice = '';
+  afterAccountChange();
+  if (ws && !sync.vault && !vaultOffered) { vaultOffered = true; vaultOffer = true; renderBanner(); }
+}
+let vaultOffered = false;
+
+async function signOutNow() {
+  if (!cloud) return;
+  await cloud.signOut();
+  if (sync) sync.vault = undefined;
+  vaultOffer = false;
+  afterAccountChange();
+  setStatus('Signed out. The token and drafts in this browser were kept; use "Clear this browser" on a shared computer.');
+}
+
+function openVaultDialog() {
+  if (!settings || !sync) return;
+  $('vault-title').textContent = 'Save my connection to my account';
+  $('vault-text').textContent = 'Choose a vault passphrase. Your repository and token are encrypted with it in this browser before they are sent, so the account service cannot read them. On a new browser you sign in and type this passphrase. It cannot be recovered: if you forget it, remove the saved connection and save it again with a new one.';
+  $<HTMLInputElement>('v-pass').value = '';
+  $<HTMLInputElement>('v-pass2').value = '';
+  $('v-error').textContent = '';
+  const dlg = $<HTMLDialogElement>('vault-dialog');
+  if (!dlg.open) dlg.showModal();
+  $<HTMLInputElement>('v-pass').focus();
+}
+
+async function submitVault() {
+  const err = $('v-error');
+  const pass = $<HTMLInputElement>('v-pass').value;
+  if (!settings || !sync) return;
+  if (pass.length < 8) { err.textContent = 'Choose a passphrase of at least 8 characters.'; return; }
+  if (pass !== $<HTMLInputElement>('v-pass2').value) { err.textContent = 'The two passphrases are not the same.'; return; }
+  err.textContent = 'Encrypting…';
+  try {
+    const sealed = await sealConnection(pass, { owner: settings.owner, repo: settings.repo, branch: settings.branch, token: settings.token, expires: settings.expires });
+    await sync.setVault(sealed);
+  } catch (e) {
+    err.textContent = errorText(e);
+    return;
+  }
+  $<HTMLDialogElement>('vault-dialog').close();
+  vaultOffer = false;
+  renderBanner();
+  settingsView.refresh();
+  setStatus('Connection saved to your account.');
+}
+
+async function removeVault() {
+  if (!sync || !confirm('Remove the saved connection from your account? New browsers will then ask for the GitHub token again.')) return;
+  try { await sync.setVault(undefined); } catch (e) { setStatus(`Could not update your account: ${errorText(e)}`, 'error'); }
+  settingsView.refresh();
+}
+
+/** Opens the connection saved in the account (new browser). */
+async function unlockSavedConnection(pass: string, mode: store.Mode) {
+  const sealed = sync?.vault;
+  if (!sealed) throw new Error('No saved connection in this account.');
+  const c = await openConnection(pass, sealed);
+  const next: store.Settings = { owner: c.owner, repo: c.repo, branch: c.branch, token: c.token, expires: c.expires, mode };
+  if (!(await store.saveSettings(next, mode === 'encrypted' ? pass : undefined))) {
+    setStatus('Connected, but this browser blocks storage: you will need to sign in again next time.', 'error');
+  }
+  await connect(next);
+}
+
+// ----- start page card -----
+
+function renderLanding() {
+  const card = $('landing-card');
+  card.replaceChildren();
+  const user = cloud?.session?.user ?? null;
+  const notice = accountNotice ? el('p', { class: 'msg error', role: 'alert' }, accountNotice) : null;
+
+  if (!cloud) {
+    const b = el('button', { type: 'button', class: 'btn primary lg' }, 'Connect repository');
+    b.addEventListener('click', () => openSettings());
+    card.append(
+      el('h2', {}, 'Connect your repository'),
+      el('p', { class: 'hint' }, 'Your files live in a private GitHub repository that you own. The connection window explains how to create one in about two minutes.'),
+      b);
+    return;
+  }
+
+  if (!user) {
+    card.append(el('h2', {}, 'Welcome'), el('p', { class: 'hint' }, 'Sign in or create a free account. New browsers then need no token typing.'));
+    if (notice) card.append(notice);
+    card.append(buildAuthForm(cloud, { onSignedIn: () => void afterSignIn() }));
+    const skip = el('div', { class: 'skip' }, 'Prefer no account? ');
+    const link = el('button', { type: 'button', class: 'linklike' }, 'Connect with a GitHub token only');
+    link.addEventListener('click', () => openSettings());
+    skip.append(link);
+    card.append(skip);
+    return;
+  }
+
+  const name = profile.name || user.name || user.email || 'there';
+  if (sync?.vault) {
+    const pass = el('input', { type: 'password', autocomplete: 'current-password', spellcheck: 'false', 'aria-label': 'Vault passphrase' });
+    const mode = el('select', { 'aria-label': 'Keep the token in this browser' },
+      el('option', { value: 'device' }, 'Keep on this device (no questions later)'),
+      el('option', { value: 'encrypted' }, 'Keep encrypted (ask for the passphrase after restarts)'),
+      el('option', { value: 'session' }, 'Only until this tab closes'));
+    const go = el('button', { type: 'submit', class: 'btn primary lg' }, 'Open my projects');
+    const msg = el('p', { class: 'msg error', role: 'alert' });
+    const form = el('form', { class: 'auth-form' },
+      el('label', {}, 'Vault passphrase', pass),
+      el('label', {}, 'On this browser', mode),
+      go, msg);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      go.disabled = true;
+      msg.textContent = '';
+      try { await unlockSavedConnection(pass.value, mode.value as store.Mode); pass.value = ''; } catch (err) { msg.textContent = err instanceof Error ? err.message : String(err); }
+      go.disabled = false;
+    });
+    const other = el('button', { type: 'button', class: 'linklike' }, 'Connect a different repository');
+    other.addEventListener('click', () => openSettings());
+    const out = el('button', { type: 'button', class: 'linklike' }, 'Sign out');
+    out.addEventListener('click', () => void signOutNow());
+    card.append(el('h2', {}, `Welcome back, ${name}`), el('p', { class: 'hint' }, 'Your connection is saved in your account. Enter your vault passphrase to open your projects in this browser.'));
+    if (notice) card.append(notice);
+    card.append(form, el('div', { class: 'skip' }, other, ' · ', out));
+    return;
+  }
+
+  const connect1 = el('button', { type: 'button', class: 'btn primary lg' }, 'Connect repository');
+  connect1.addEventListener('click', () => openSettings());
+  const out = el('button', { type: 'button', class: 'linklike' }, 'Sign out');
+  out.addEventListener('click', () => void signOutNow());
+  card.append(
+    el('h2', {}, `Welcome, ${name}`),
+    el('p', { class: 'hint' }, 'Connect your GitHub repository once. Afterwards you can save the connection to your account, protected by a passphrase, so other browsers need only your sign-in.'));
+  if (notice) card.append(notice);
+  card.append(connect1, el('div', { class: 'skip' }, out));
+}
+
+/** Link from a password-reset email: ask for the new password. */
+function openRecoveryDialog() {
+  if (!cloud) return;
+  const dlg = $<HTMLDialogElement>('auth-dialog');
+  $('auth-title').textContent = 'Choose a new password';
+  const pw = el('input', { type: 'password', autocomplete: 'new-password', minlength: '8', spellcheck: 'false', 'aria-label': 'New password' });
+  const msg = el('p', { class: 'msg error', role: 'alert' });
+  const go = el('button', { type: 'submit', class: 'btn primary' }, 'Save password');
+  const form = el('form', { class: 'auth-form' }, el('label', {}, 'New password (8 or more characters)', pw), go, msg);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (pw.value.length < 8) { msg.textContent = 'Use at least 8 characters.'; return; }
+    try { await cloud!.changePassword(pw.value); dlg.close(); $('auth-title').textContent = 'Sign in to LeoTeX'; setStatus('Password changed.'); } catch (err) { msg.textContent = err instanceof Error ? err.message : String(err); }
+  });
+  $('auth-form').replaceChildren(form);
+  if (!dlg.open) dlg.showModal();
+  pw.focus();
+}
+
+/** Reads the address the account service sent the browser back to (sign-in code, confirmation, reset link, error). */
+async function handleAuthReturn() {
+  if (!cloud) return;
+  const url = new URL(location.href);
+  if (!url.searchParams.has('code') && !url.searchParams.has('error') && !/error/.test(url.hash)) return;
+  try {
+    const kind = await cloud.completeFromUrl(url);
+    if (kind === 'confirmed-elsewhere') accountNotice = 'Your email address is confirmed. Please sign in.';
+    else if (kind === 'recovery') recoveryPending = true;
+  } catch (e) {
+    accountNotice = errorText(e);
+  }
+  history.replaceState(null, '', location.pathname); // the one-time code must not stay in the address bar
+}
 
 // ---------- Start ----------
 
 applyPrefs(prefs);
 setEnabled();
 closeEditor();
-const loaded = store.loadSettings();
-if (!loaded) openSettings();
-else if ('locked' in loaded) openUnlock(loaded.locked);
-else void connect(loaded.settings);
+paintAccount();
+renderHelpKeys();
+renderLanding();
+void (async () => {
+  await handleAuthReturn();
+  if (cloud?.session) void afterSignIn(); // brings settings from the account; does not block starting
+  renderLanding();
+  const loaded = store.loadSettings();
+  if (loaded && 'locked' in loaded) openUnlock(loaded.locked);
+  else if (loaded) void connect(loaded.settings);
+  if (recoveryPending) openRecoveryDialog();
+})();

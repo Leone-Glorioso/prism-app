@@ -1,0 +1,13 @@
+name: texlive pull test
+on: workflow_dispatch
+permissions:
+  contents: read
+  packages: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull from the mirror
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          s=$(date +%s); docker pull -q ghcr.io/prism-latex/texlive:latest >/dev/null; echo "MIRROR PULL SECONDS: $(( $(date +%s) - s ))"
